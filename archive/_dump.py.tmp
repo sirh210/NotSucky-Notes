@@ -1,6 +1,0 @@
-import sys
-sys.stdout.reconfigure(encoding='utf-8')
-with open('main.py', 'r', encoding='utf-8') as f:
-    for i, line in enumerate(f, 1):
-        safe = ''.join(c if ord(c) < 128 else '?' for c in line)
-        print(f'{i:03d} | {safe}', end='')
