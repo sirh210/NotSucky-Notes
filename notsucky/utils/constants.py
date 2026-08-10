@@ -28,6 +28,14 @@ MAX_GRID_COLUMNS: Final[int] = 6
 GRID_SPACING: Final[int] = 16
 GRID_MARGIN: Final[int] = 20
 
+#: Cards built synchronously before the grid yields to the event loop. Sized
+#: to comfortably overfill any viewport, so the first paint is always
+#: complete; the rest stream in without freezing the window.
+GRID_FIRST_CHUNK: Final[int] = 48
+
+#: Cards built per timer tick after the first chunk.
+GRID_CHUNK_SIZE: Final[int] = 32
+
 # ─── Note windows ─────────────────────────────────────────────────
 DEFAULT_NOTE_WIDTH: Final[int] = 320
 DEFAULT_NOTE_HEIGHT: Final[int] = 280

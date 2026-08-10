@@ -4,6 +4,69 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-08-10
+
+Follow-up review pass: security, performance, observability, and docs.
+
+### Security
+
+- **Unbounded reads.** A note file was read fully into memory before the
+  1,000,000-character cap applied, so one 60 MB file was a 60 MB allocation
+  during startup and a directory of them was an out-of-memory crash. Files
+  over 8 MB are now skipped with a warning. Measured: a 60 MB file took
+  `load_all` from 114 ms to 2 ms, by not reading it.
+- **Zip bomb.** `restore_backup` wrote 200 MB to disk from a 199 KB archive.
+  Declared sizes are now checked before any bytes are written — per entry,
+  in total, and by entry count. The same archive now writes nothing.
+- **Directory permissions.** The notes and backup directories are `chmod
+  0700` on Linux and macOS; the default `0755` let any local account list
+  note titles. Skipped on Windows, where the ACLs inherited from
+  `%LOCALAPPDATA%` already restrict access and POSIX modes are cosmetic.
+- Added [SECURITY.md](SECURITY.md) with the threat model, the controls, and
+  the risks deliberately accepted.
+- Tests now assert that no note title or body ever reaches the log.
+
+### Performance
+
+- **Card stylesheets moved to application scope.** Qt re-parses CSS for every
+  widget carrying its own stylesheet; at five per card that was ~80% of the
+  cost of building the grid. Cards now set a `noteColor` property against one
+  shared sheet. Per-card construction: **350 µs → 142 µs**.
+- **The grid streams.** Only the first 48 cards are built before the window
+  paints; the rest arrive in chunks without blocking. At 2,000 notes, first
+  paint went from **2,046 ms → 9 ms**, and total build from 2,046 ms → 365 ms.
+  Dashboard startup: **1,603 ms → 93 ms**.
+- Added `tests/test_performance.py` to guard against each of these
+  regressing.
+
+### Observability
+
+- Qt's own warnings are routed into Python logging, so they land in the log
+  file instead of a console a windowed app does not have.
+- A crash handler logs uncaught exceptions with a full traceback and tells the
+  user which file to look in.
+- Startup steps are timed at INFO, so "it takes ages to open" localises itself.
+- New `--diagnostics` prints versions, paths, and store counts for a bug
+  report — and deliberately no note content, so it is safe to paste publicly.
+
+### Documentation
+
+- Added [OPERATIONS.md](OPERATIONS.md) (support and recovery runbook),
+  [CONTRIBUTING.md](CONTRIBUTING.md), and [ROADMAP.md](ROADMAP.md).
+- Added `tests/test_docs.py`, which fails when the docs reference a module,
+  shortcut, CLI flag, or path that does not exist. It immediately caught three
+  stale claims in the README.
+
+### Code quality
+
+- `mypy` now runs in CI and passes. Fixing its findings turned up real issues:
+  `QApplication.instance()` can be a `QCoreApplication` with no stylesheet,
+  `QLayout.takeAt` can return `None`, and `is_valid_id` is now a `TypeGuard`
+  so the check and the type cannot drift apart.
+- Extracted `views/qt_support.py` for Qt's Python/C++ lifetime split, and
+  `clear_layout`, replacing four copies of the same `try/except RuntimeError`.
+- CI additionally runs `pip-audit` and enforces a 90% coverage floor.
+
 ## [1.1.0] — 2026-08-10
 
 A production-readiness pass. Version 1.0.0 could not start; see
@@ -112,8 +175,8 @@ A production-readiness pass. Version 1.0.0 could not start; see
 
 ### Tests
 
-- Rewritten: **304 passing, 94% coverage** (was 8 failed, 7 errored, 11
-  passed, with no GUI coverage).
+- Rewritten: **408 passing, 92% coverage** (was 8 failed, 7 errored, 11
+  passed, with no GUI coverage), with a 90% floor enforced in CI.
 - Tests no longer read or write the real notes directory.
 - Added GUI coverage via `pytest-qt`, including named regression tests for the
   runaway drag, the undraggable window, the unpainted card background, the

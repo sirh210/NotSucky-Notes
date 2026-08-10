@@ -20,8 +20,8 @@ reading and writing the *real* notes directory.
 | | Before | After |
 | --- | --- | --- |
 | Application starts | ❌ `ImportError` | ✅ |
-| Tests | 8 failed, 7 errored, 11 passed | ✅ 304 passed |
-| Coverage | not measurable | 94% |
+| Tests | 8 failed, 7 errored, 11 passed | ✅ 408 passed |
+| Coverage | not measurable | 92% |
 | Lint (`ruff`) | 104 errors | ✅ clean |
 | Wheel builds | ❌ invalid build backend | ✅ builds and installs |
 | Installed package imports | ❌ 4 subpackages missing | ✅ |
@@ -265,7 +265,7 @@ The suite was actively misleading — it reported confidence it had not earned.
   `pytest` risked the user's data.
 * **Zero GUI coverage** — which is why two import-time blockers shipped.
 
-**Delivered:** 304 tests, 94% coverage, isolated by an autouse fixture that
+**Delivered:** 408 tests, 92% coverage, isolated by an autouse fixture that
 repoints storage at a per-test temporary directory and suppresses the legacy
 import. Includes GUI tests via `pytest-qt` covering the grid, filtering, the
 dock, open/close/minimize/restore/delete lifecycles, drag-to-reorder,
@@ -356,6 +356,84 @@ Drawn at runtime in `views/icon.py` at seven sizes — no binary asset, no
 package-data entry, and no blur from scaling one bitmap. Rules are dropped
 below 24 px where they would turn to mud. Verified on both light and dark
 grounds.
+
+---
+
+## 9. Follow-up review (v1.2.0)
+
+A second pass covering security, performance, observability, code quality, and
+documentation. Everything here was **measured before it was changed** — the
+numbers are from this machine, not estimates.
+
+### 9.1 Security — three real holes, closed
+
+| Finding | Before | After |
+| --- | --- | --- |
+| **Unbounded read.** A note file was read entirely into memory before the 1,000,000-character cap applied. One 60 MB file was a 60 MB allocation at startup; a directory of them was an OOM crash. | 60 MB file: `load_all` 114 ms, file read in full | Skipped over 8 MB: **2 ms**, nothing allocated |
+| **Zip bomb.** `restore_backup` extracted whatever an archive contained. | 199 KB archive → **200 MB written** in 332 ms | **0 bytes written**, refused in 11 ms |
+| **World-listable data.** The notes directory took the default mode, letting any local account list note titles. | `0755` on POSIX | `0700` on POSIX; skipped on Windows, where ACLs already restrict it and POSIX modes are cosmetic |
+
+Checked and found already sound: path traversal (ids validated, repaired on
+load, rejected at the path boundary), deserialization (no `pickle`/`eval`,
+every field coerced, unknown keys dropped), and logging — no note title or
+body reaches a log record, now enforced by tests that plant a secret and
+search the captured output.
+
+Accepted, not fixed: symlinks inside the notes directory are followed on read.
+Blocking that would break legitimate setups, and anyone who can create files
+in your data directory already has your account. Documented in
+[SECURITY.md](SECURITY.md).
+
+### 9.2 Performance — the grid, not the disk
+
+Measured at 10/100/500/2,000 notes before touching anything. I/O was never the
+problem; **building widgets was**.
+
+| At 2,000 notes | Before | After |
+| --- | --- | --- |
+| Grid build (blocking first paint) | 2,046 ms | **9 ms** |
+| Grid build (total, all cards) | 2,046 ms | **365 ms** |
+| Dashboard startup | 1,603 ms | **93 ms** |
+| `load_all` | 83 ms | 89 ms (unchanged — never the bottleneck) |
+| Filter keystroke | 1.1 ms | 1.2 ms (already in-memory) |
+
+Two causes, both fixed:
+
+1. **Per-widget stylesheets.** Qt re-parses CSS for every widget that carries
+   its own. At five `setStyleSheet` calls per card that was ~80% of card
+   construction. Cards now set a `noteColor` property against one
+   application-scope sheet: **350 µs → 142 µs per card.**
+2. **Building everything before painting.** The grid now builds 48 cards —
+   more than fills any viewport — then streams the rest in chunks through the
+   event loop.
+
+### 9.3 Code quality
+
+`mypy` was added and its findings were real, not ceremony:
+
+- `QApplication.instance()` is typed as, and can be, a `QCoreApplication` with
+  no stylesheet at all — an `AttributeError` waiting for a headless run.
+- `QLayout.takeAt` can return `None`; two loops assumed otherwise.
+- `is_valid_id` is now a `TypeGuard`, so the runtime check and the static type
+  cannot drift apart.
+
+Duplication removed: four copies of the same `try/except RuntimeError` dance
+around Qt's Python/C++ object lifetime became `views/qt_support.py`, and two
+copies of the layout-clearing loop became `clear_layout`.
+
+**Considered and declined:** extracting a `NoteWindowManager` from
+`dashboard.py` (600 lines). The class is cohesive and its longest method is 43
+lines, so the case rests on file length alone — while the code in question is
+the most bug-prone in the application and has just been stabilised. That trade
+is not worth making today. The seam is the `_open_notes` dictionary plus the
+open/close/minimize/restore methods, if it ever grows further.
+
+### 9.4 Documentation is now tested
+
+`tests/test_docs.py` fails when the docs describe something that does not
+exist: a module in the structure tree, a keyboard shortcut, a CLI flag, a
+relative link, a version number, or an unreplaced clone-URL placeholder. It
+caught three stale claims in the README on its first run.
 
 ---
 

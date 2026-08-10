@@ -33,6 +33,7 @@ from notsucky.utils.constants import (
     color_scheme,
 )
 from notsucky.utils.geometry import cascade_position, clamp_to_screens
+from notsucky.views.qt_support import is_alive
 
 logger = logging.getLogger(__name__)
 
@@ -217,9 +218,9 @@ class NoteWidget(QWidget):
         return bar
 
     def _install_shortcuts(self) -> None:
-        QShortcut(QKeySequence("Ctrl+W"), self, activated=self._request_close)
-        QShortcut(QKeySequence("Ctrl+M"), self, activated=self._request_minimize)
-        QShortcut(QKeySequence.StandardKey.Save, self, activated=self.flush)
+        QShortcut(QKeySequence("Ctrl+W"), self, self._request_close)
+        QShortcut(QKeySequence("Ctrl+M"), self, self._request_minimize)
+        QShortcut(QKeySequence.StandardKey.Save, self, self.flush)
 
     # ─── Geometry ─────────────────────────────────────────────────
 
@@ -348,11 +349,7 @@ class NoteWidget(QWidget):
 
     def _widget_alive(self) -> bool:
         """False once Qt has destroyed the underlying C++ objects."""
-        try:
-            self.text_edit.isVisible()
-        except RuntimeError:
-            return False
-        return True
+        return is_alive(self.text_edit)
 
     def change_color(self, color_name: str) -> None:
         """Switch palette and persist the choice."""

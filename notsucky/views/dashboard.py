@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -38,6 +39,8 @@ from notsucky.utils.constants import (
     CHROME_PANEL,
     CHROME_TEXT,
     CHROME_TEXT_MUTED,
+    GRID_CHUNK_SIZE,
+    GRID_FIRST_CHUNK,
     GRID_MARGIN,
     GRID_SPACING,
     MAX_GRID_COLUMNS,
@@ -49,8 +52,25 @@ from notsucky.utils.constants import (
 from notsucky.utils.geometry import columns_for_width
 from notsucky.views.card_widget import CardWidget
 from notsucky.views.note_widget import NoteWidget
+from notsucky.views.qt_support import close_and_delete, live
 
 logger = logging.getLogger(__name__)
+
+
+def clear_layout(layout: QLayout) -> None:
+    """Remove and delete every widget in ``layout``.
+
+    ``takeAt`` is documented to return None past the end; guarding it means
+    a concurrent modification cannot turn a rebuild into a crash.
+    """
+    while layout.count():
+        item = layout.takeAt(0)
+        if item is None:
+            break
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
 
 
 class DashboardWindow(QMainWindow):
@@ -68,6 +88,7 @@ class DashboardWindow(QMainWindow):
         self._notes: list[Note] = []
         self._visible_notes: list[Note] = []
         self._columns = 0
+        self._built_cards = 0
         self._shutting_down = False
         # Trash paths of deleted notes, most recent last. Survives for the
         # session; the files themselves survive TRASH_RETENTION_DAYS.
@@ -87,6 +108,12 @@ class DashboardWindow(QMainWindow):
         self._relayout_timer.setInterval(80)
         self._relayout_timer.timeout.connect(self._rebuild_grid)
 
+        # Streams the remaining cards in after the first chunk has painted.
+        self._card_timer = QTimer(self)
+        self._card_timer.setSingleShot(True)
+        self._card_timer.setInterval(0)
+        self._card_timer.timeout.connect(self._add_next_chunk)
+
         self._auto_save_timer = QTimer(self)
         self._auto_save_timer.timeout.connect(self._auto_save_loop)
         self._auto_save_timer.start(AUTO_SAVE_INTERVAL_MS)
@@ -96,11 +123,21 @@ class DashboardWindow(QMainWindow):
     # ─── Construction ─────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        # Every rule here is scoped by a selector. A selector-less sheet such
+        # as `setStyleSheet("background: transparent")` applies to the widget
+        # *and every descendant*, which is how the grid container silently
+        # blanked the background of every card inside it.
         self.setStyleSheet(f"""
             QMainWindow {{ background-color: {CHROME_BG}; }}
             QWidget#central {{ background-color: {CHROME_BG}; }}
             QWidget#header, QWidget#dock {{ background-color: {CHROME_PANEL}; }}
             QWidget#dock {{ border-top: 1px solid {CHROME_BORDER}; }}
+            QWidget#gridFrame, QWidget#dockContent, QWidget#headerLeft {{
+                background: transparent;
+            }}
+            QScrollArea#gridScroll, QScrollArea#dockScroll {{
+                background: transparent; border: none;
+            }}
             QStatusBar {{ background-color: {CHROME_PANEL}; color: {CHROME_TEXT_MUTED}; }}
         """)
 
@@ -115,13 +152,13 @@ class DashboardWindow(QMainWindow):
         main_layout.addWidget(self._build_header())
 
         self.grid_scroll = QScrollArea()
+        self.grid_scroll.setObjectName("gridScroll")
         self.grid_scroll.setWidgetResizable(True)
         self.grid_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.grid_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.grid_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         self.grid_frame = QWidget()
-        self.grid_frame.setStyleSheet("background: transparent;")
+        self.grid_frame.setObjectName("gridFrame")
         self.grid_layout = QGridLayout(self.grid_frame)
         self.grid_layout.setContentsMargins(GRID_MARGIN, 15, GRID_MARGIN, GRID_MARGIN)
         self.grid_layout.setHorizontalSpacing(GRID_SPACING)
@@ -155,7 +192,7 @@ class DashboardWindow(QMainWindow):
         self.path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         left = QWidget()
-        left.setStyleSheet("background: transparent;")
+        left.setObjectName("headerLeft")
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
@@ -229,13 +266,13 @@ class DashboardWindow(QMainWindow):
         dock_layout.addWidget(self.dock_hint)
 
         self.dock_scroll = QScrollArea()
+        self.dock_scroll.setObjectName("dockScroll")
         self.dock_scroll.setWidgetResizable(True)
         self.dock_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.dock_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.dock_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         self.dock_content = QWidget()
-        self.dock_content.setStyleSheet("background: transparent;")
+        self.dock_content.setObjectName("dockContent")
         self.dock_layout_inner = QHBoxLayout(self.dock_content)
         self.dock_layout_inner.setContentsMargins(0, 0, 0, 0)
         self.dock_layout_inner.setSpacing(6)
@@ -249,11 +286,14 @@ class DashboardWindow(QMainWindow):
         return self.dock_frame
 
     def _install_shortcuts(self) -> None:
-        QShortcut(QKeySequence.StandardKey.New, self, activated=self.create_note)
-        QShortcut(QKeySequence.StandardKey.Refresh, self, activated=lambda: self.reload())
-        QShortcut(QKeySequence.StandardKey.Find, self, activated=self._focus_search)
-        QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo_delete)
-        QShortcut(QKeySequence("Esc"), self, activated=self._clear_search)
+        # The receiver is passed positionally: `activated=` works at runtime
+        # but is not in Qt's stubs, so the keyword form hides real mistakes
+        # from the type checker.
+        QShortcut(QKeySequence.StandardKey.New, self, self.create_note)
+        QShortcut(QKeySequence.StandardKey.Refresh, self, lambda: self.reload())
+        QShortcut(QKeySequence.StandardKey.Find, self, self._focus_search)
+        QShortcut(QKeySequence.StandardKey.Undo, self, self.undo_delete)
+        QShortcut(QKeySequence("Esc"), self, self._clear_search)
 
     # ─── Loading ──────────────────────────────────────────────────
 
@@ -304,12 +344,7 @@ class DashboardWindow(QMainWindow):
         )
 
     def _clear_grid(self) -> None:
-        while self.grid_layout.count():
-            item = self.grid_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+        clear_layout(self.grid_layout)
         for row in range(self.grid_layout.rowCount()):
             self.grid_layout.setRowStretch(row, 0)
         for column in range(self.grid_layout.columnCount()):
@@ -319,6 +354,8 @@ class DashboardWindow(QMainWindow):
         if self._shutting_down:
             return
 
+        self._card_timer.stop()  # abandon a stream from a previous rebuild
+        self._built_cards = 0
         self._clear_grid()
         columns = self._columns = self._column_count()
 
@@ -340,19 +377,53 @@ class DashboardWindow(QMainWindow):
             self.grid_layout.setRowStretch(0, 1)
             return
 
-        for index, note in enumerate(self._visible_notes):
-            card = CardWidget(note)
-            card.open_requested.connect(self.open_note)
-            card.delete_requested.connect(self.delete_note)
-            card.reorder_requested.connect(self._on_reorder)
-            self.grid_layout.addWidget(card, index // columns, index % columns)
-
         for column in range(columns):
             self.grid_layout.setColumnStretch(column, 1)
         # Absorb leftover vertical space so cards keep their natural height
         # instead of stretching to fill a sparse grid.
         last_row = (len(self._visible_notes) - 1) // columns
         self.grid_layout.setRowStretch(last_row + 1, 1)
+
+        self._built_cards = 0
+        self._add_cards(GRID_FIRST_CHUNK)
+
+    def _add_cards(self, count: int) -> None:
+        """Build the next ``count`` cards, then schedule any remainder.
+
+        Building 2,000 cards in one pass blocked the UI for two seconds.
+        Streaming them keeps the window responsive; the first chunk always
+        overfills the viewport, so nothing looks unfinished.
+        """
+        columns = max(1, self._columns)
+        start = self._built_cards
+        end = min(start + count, len(self._visible_notes))
+
+        for index in range(start, end):
+            note = self._visible_notes[index]
+            card = CardWidget(note)
+            card.open_requested.connect(self.open_note)
+            card.delete_requested.connect(self.delete_note)
+            card.reorder_requested.connect(self._on_reorder)
+            self.grid_layout.addWidget(card, index // columns, index % columns)
+
+        self._built_cards = end
+        if end < len(self._visible_notes):
+            self._card_timer.start()
+
+    def _add_next_chunk(self) -> None:
+        if not self._shutting_down:
+            self._add_cards(GRID_CHUNK_SIZE)
+
+    def finish_building_grid(self) -> None:
+        """Build every remaining card immediately.
+
+        For tests and for anything that needs the full grid without waiting
+        on the event loop.
+        """
+        self._card_timer.stop()
+        remaining = len(self._visible_notes) - self._built_cards
+        if remaining > 0:
+            self._add_cards(remaining)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -362,12 +433,7 @@ class DashboardWindow(QMainWindow):
     # ─── Dock ─────────────────────────────────────────────────────
 
     def _rebuild_dock(self) -> None:
-        while self.dock_layout_inner.count():
-            item = self.dock_layout_inner.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+        clear_layout(self.dock_layout_inner)
 
         by_id = {n.id: n for n in self._notes}
         shown = 0
@@ -399,16 +465,11 @@ class DashboardWindow(QMainWindow):
 
     def _live_widget(self, note_id: str) -> NoteWidget | None:
         """Return the open window for ``note_id``, dropping dead references."""
-        widget = self._open_notes.get(note_id)
+        widget = live(self._open_notes.get(note_id))
         if widget is None:
-            return None
-        try:
-            widget.isVisible()
-        except RuntimeError:
-            # The C++ side was destroyed; the stale Python reference would
+            # A destroyed C++ side leaves a stale Python reference that would
             # otherwise linger here forever and crash on next use.
             self._open_notes.pop(note_id, None)
-            return None
         return widget
 
     def open_note(self, note_id: str) -> None:
@@ -442,13 +503,7 @@ class DashboardWindow(QMainWindow):
 
     def close_note(self, note_id: str) -> None:
         """Close a floating note window, flushing pending edits."""
-        widget = self._open_notes.pop(note_id, None)
-        if widget is not None:
-            try:
-                widget.close()
-                widget.deleteLater()
-            except RuntimeError:  # pragma: no cover - already destroyed
-                pass
+        close_and_delete(self._open_notes.pop(note_id, None))
         if note_id in self._minimized_ids:
             self._minimized_ids.remove(note_id)
         self.reload()
@@ -532,15 +587,7 @@ class DashboardWindow(QMainWindow):
 
         # Tear the window down first: a widget left in _open_notes would keep
         # auto-saving the note straight back onto disk after deletion.
-        widget = self._open_notes.pop(note_id, None)
-        if widget is not None:
-            try:
-                widget.blockSignals(True)
-                widget.hide()
-                widget.close()
-                widget.deleteLater()
-            except RuntimeError:  # pragma: no cover - already destroyed
-                pass
+        close_and_delete(self._open_notes.pop(note_id, None), silence_signals=True)
         if note_id in self._minimized_ids:
             self._minimized_ids.remove(note_id)
 
@@ -640,13 +687,13 @@ class DashboardWindow(QMainWindow):
         self._auto_save_timer.stop()
         self._search_timer.stop()
         self._relayout_timer.stop()
+        self._card_timer.stop()
 
         for note_id in list(self._open_notes):
             widget = self._open_notes.pop(note_id)
             try:
                 widget.flush()
-                widget.close()
-                widget.deleteLater()
+                close_and_delete(widget)
             except (RuntimeError, StorageError) as exc:
                 logger.error("Could not cleanly close note %s: %s", note_id, exc)
 

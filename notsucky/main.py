@@ -46,16 +46,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List available backup snapshots, then exit.",
     )
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Print environment and storage details for a bug report, then exit.",
+    )
     return parser
 
 
 def run_backup_command(args: argparse.Namespace) -> int | None:
-    """Handle the backup subcommands. Returns an exit code, or None.
+    """Handle the console subcommands. Returns an exit code, or None.
 
-    None means no backup command was requested and the GUI should start.
-    These run without a QApplication so they work over SSH and in cron.
+    None means no such command was requested and the GUI should start. These
+    run without a QApplication so they work over SSH and in cron.
     """
     from notsucky.services import backup
+
+    if getattr(args, "diagnostics", False):
+        from notsucky.utils.diagnostics import format_diagnostics
+
+        print(format_diagnostics())
+        return 0
 
     if args.list_backups:
         backups = backup.list_backups()
@@ -108,7 +119,17 @@ def main(argv: list[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from notsucky.services.note_service import NoteService
+    from notsucky.utils.diagnostics import (
+        install_crash_handler,
+        install_qt_message_handler,
+        timed,
+    )
     from notsucky.views.icon import app_icon
+
+    # Installed before the first widget exists, so a failure during startup
+    # is reported rather than printed to a console nobody is watching.
+    install_qt_message_handler()
+    install_crash_handler(log_path)
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("NotSucky Notes")
@@ -122,12 +143,14 @@ def main(argv: list[str] | None = None) -> int:
     if log_path is not None:
         logger.info("Logging to %s", log_path)
 
-    NoteService.run_maintenance(backup=not args.no_backup)
+    with timed("Startup maintenance"):
+        NoteService.run_maintenance(backup=not args.no_backup)
 
     from notsucky.views.dashboard import DashboardWindow
 
-    window = DashboardWindow()
-    window.show()
+    with timed("Dashboard startup"):
+        window = DashboardWindow()
+        window.show()
     return app.exec()
 
 

@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from notsucky.utils.constants import (
     COLORS,
@@ -43,8 +43,12 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def is_valid_id(value: Any) -> bool:
-    """Return whether ``value`` is safe to use as a note id and file name."""
+def is_valid_id(value: Any) -> TypeGuard[str]:
+    """Return whether ``value`` is safe to use as a note id and file name.
+
+    A ``TypeGuard`` so that callers narrowing on this get ``str`` rather than
+    ``Any`` — the check and the type then cannot drift apart.
+    """
     return isinstance(value, str) and bool(ID_PATTERN.match(value))
 
 

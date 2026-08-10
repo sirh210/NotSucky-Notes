@@ -29,6 +29,37 @@ jobs:
       - name: ruff check
         run: ruff check --output-format=github .
 
+  types:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install mypy PySide6
+      - name: mypy
+        run: mypy notsucky
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+      # Audits the declared runtime dependencies for published advisories.
+      - name: pip-audit
+        run: pip-audit --strict --requirement requirements.txt
+
   test:
     name: Test ${{ matrix.os }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
@@ -61,6 +92,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      # --cov-fail-under is set in pyproject, so coverage dropping below the
+      # floor fails the build rather than quietly eroding.
       - name: Run tests
         run: pytest --cov=notsucky --cov-report=term-missing --cov-report=xml
 

@@ -63,6 +63,7 @@ def backup_dir(*, create: bool = True) -> Path:
     target = notes_dir(create=False).parent / "backups"
     if create:
         target.mkdir(parents=True, exist_ok=True)
+        restrict_permissions(target)
     return target
 
 
@@ -103,9 +104,26 @@ def notes_dir(*, create: bool = True) -> Path:
         return target
 
     target.mkdir(parents=True, exist_ok=True)
+    restrict_permissions(target)
     _migrate_legacy_notes(target)
     _resolved = target
     return target
+
+
+def restrict_permissions(path: Path) -> None:
+    """Make a directory owner-only on POSIX. No-op elsewhere.
+
+    Notes are private by nature, and the default 0755 lets any local account
+    list note titles. Windows inherits ACLs from the user's AppData, which is
+    already owner-only, and chmod there is largely cosmetic — so this is
+    skipped rather than faked.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        path.chmod(0o700)
+    except OSError as exc:  # pragma: no cover - unusual filesystems
+        logger.debug("Could not restrict permissions on %s: %s", path, exc)
 
 
 # ─── Legacy data import ───────────────────────────────────────────

@@ -27,6 +27,13 @@ BACKUP_INTERVAL_SECONDS = 24 * 3600
 BACKUP_PREFIX = "notes-"
 BACKUP_SUFFIX = ".zip"
 
+#: Limits applied when reading an archive. A zip is attacker-controllable in
+#: the sense that a user can be handed one, and a 200 KB file can expand to
+#: gigabytes; ``ZipInfo.file_size`` is checked *before* anything is written.
+MAX_RESTORE_ENTRIES = 100_000
+MAX_RESTORE_ENTRY_BYTES = 16 * 1024 * 1024
+MAX_RESTORE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+
 
 def list_backups() -> list[Path]:
     """Existing snapshots, newest first."""
@@ -110,22 +117,45 @@ def restore_backup(archive_path: Path, *, overwrite: bool = False) -> int:
     """Extract a snapshot back into the notes directory.
 
     Existing notes are left alone unless ``overwrite`` is set. Returns the
-    number of notes written. Entries with a path separator are skipped, so a
-    tampered archive cannot write outside the notes directory.
+    number of notes written.
+
+    Hardened against a hostile archive on three fronts: entries containing a
+    path separator are skipped so nothing can be written outside the notes
+    directory (zip slip); declared sizes are checked before any data is
+    written, per entry and in total, so a small archive cannot expand into a
+    full disk (zip bomb); and non-JSON entries are ignored.
     """
     destination = FileManager.directory()
     written = 0
+    total_bytes = 0
+
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            for name in archive.namelist():
+            entries = archive.infolist()
+            if len(entries) > MAX_RESTORE_ENTRIES:
+                raise OSError(f"archive declares {len(entries)} entries, refusing to read it")
+
+            for info in entries:
+                name = info.filename
                 candidate = Path(name)
-                if candidate.name != name or candidate.suffix != ".json":
-                    logger.warning("Skipping unsafe archive entry %r", name)
+                if info.is_dir() or candidate.name != name or candidate.suffix != ".json":
+                    logger.warning("Skipping unsafe or irrelevant archive entry %r", name)
                     continue
+                if info.file_size > MAX_RESTORE_ENTRY_BYTES:
+                    logger.warning(
+                        "Skipping archive entry %r: %d bytes exceeds the per-file limit",
+                        name,
+                        info.file_size,
+                    )
+                    continue
+                if total_bytes + info.file_size > MAX_RESTORE_TOTAL_BYTES:
+                    raise OSError("archive expands past the total restore limit")
+
                 target = destination / candidate.name
                 if target.exists() and not overwrite:
                     continue
                 target.write_bytes(archive.read(name))
+                total_bytes += info.file_size
                 written += 1
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise OSError(f"Could not restore {Path(archive_path).name}: {exc}") from exc

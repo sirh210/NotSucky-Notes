@@ -563,6 +563,62 @@ class TestDashboardGrid:
         assert MIN_GRID_COLUMNS <= dashboard._column_count() <= MAX_GRID_COLUMNS
 
 
+class TestDashboardRendering:
+    """Pixel checks against a card *inside the dashboard*.
+
+    A standalone card painting correctly proves nothing about the real
+    window: Qt gives an ancestor's stylesheet precedence over the
+    application's, so the dashboard's own sheet can suppress the card rules
+    and leave every card transparent. That regression shipped once because
+    the only pixel test used a parentless card.
+    """
+
+    def _card_pixel(self, window, card):
+        image = window.grab().toImage()
+        return image.pixelColor(card.mapTo(window, card.rect().center())).name().upper()
+
+    def test_a_card_in_the_grid_paints_its_colour(self, qtbot) -> None:
+        NoteService.create(title="Yellow one", color="Yellow")
+        window = DashboardWindow()
+        qtbot.addWidget(window)
+        window.resize(900, 600)
+        window.show()
+        qtbot.waitExposed(window)
+
+        card = window.grid_frame.findChildren(CardWidget)[0]
+        assert self._card_pixel(window, card) == "#FFF9C4"
+
+    def test_every_colour_survives_the_dashboard_cascade(self, qtbot) -> None:
+        from notsucky.utils.constants import COLORS
+
+        for name in COLORS:
+            NoteService.create(title=f"{name} note", color=name)
+
+        window = DashboardWindow()
+        qtbot.addWidget(window)
+        window.resize(1100, 800)
+        window.show()
+        qtbot.waitExposed(window)
+        window.finish_building_grid()
+
+        for card in window.grid_frame.findChildren(CardWidget):
+            expected = COLORS[card.note.color]["bg"].upper()
+            assert self._card_pixel(window, card) == expected, card.note.color
+
+    def test_the_card_never_shows_the_dark_chrome_behind_it(self, qtbot) -> None:
+        from notsucky.utils.constants import CHROME_BG
+
+        NoteService.create(title="Any")
+        window = DashboardWindow()
+        qtbot.addWidget(window)
+        window.resize(900, 600)
+        window.show()
+        qtbot.waitExposed(window)
+
+        card = window.grid_frame.findChildren(CardWidget)[0]
+        assert self._card_pixel(window, card) != CHROME_BG.upper()
+
+
 class TestDashboardLifecycle:
     def test_create_note_opens_a_window(self, dashboard) -> None:
         dashboard.create_note()

@@ -28,7 +28,7 @@ plain JSON files on disk and no database.
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/sirh210/NotSucky-Notes.git
 cd NotSucky-Notes
 
 python -m venv .venv
@@ -126,15 +126,21 @@ NotSucky-Notes/
 │   │   ├── dashboard.py      # main window, grid, dock, lifecycle
 │   │   ├── card_widget.py    # grid card; drag source and drop target
 │   │   ├── note_widget.py    # floating note window
+│   │   ├── qt_support.py     # Qt object-lifetime helpers
 │   │   └── icon.py           # application icon, drawn at runtime
 │   └── utils/
 │       ├── constants.py      # colors, limits, timings
 │       ├── paths.py          # storage location resolution & migration
 │       ├── geometry.py       # pure screen-clamping and layout maths
+│       ├── diagnostics.py    # timings, crash handler, support report
 │       └── logging_config.py
-├── tests/                    # 304 tests, 94% coverage
-├── .github/workflows/ci.yml  # lint, test matrix, wheel verification
+├── tests/                    # 408 tests, 92% coverage
+├── .github/workflows/ci.yml  # lint, types, audit, test matrix, wheel check
 ├── AUDIT.md                  # production-readiness audit
+├── SECURITY.md               # threat model and controls
+├── OPERATIONS.md             # support and recovery runbook
+├── CONTRIBUTING.md
+├── ROADMAP.md
 └── CHANGELOG.md
 ```
 
@@ -159,7 +165,7 @@ Two rules keep this honest and are worth preserving:
 ```bash
 pip install -r requirements-dev.txt
 
-pytest                                        # 304 tests
+pytest                                        # the full suite
 pytest --cov=notsucky --cov-report=term-missing
 ruff check .
 python -m build --wheel
@@ -174,9 +180,34 @@ QT_QPA_PLATFORM=offscreen pytest
 Tests never touch your real notes: an autouse fixture repoints storage at a
 temporary directory for every test.
 
-CI runs `ruff` plus the full suite on Linux and Windows across Python
-3.10–3.13, then builds the wheel and verifies that every subpackage imports
-from a clean install.
+CI runs `ruff`, `mypy`, and `pip-audit`, then the full suite on Linux and
+Windows across Python 3.10–3.13, then builds the wheel and verifies that every
+subpackage imports from a clean install. Coverage below 90% fails the build.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layering rules and the reasons
+behind them.
+
+## Troubleshooting
+
+```bash
+notsucky-notes-cli --diagnostics    # versions, paths, and store counts
+notsucky-notes --log-level DEBUG    # verbose logging
+```
+
+The diagnostics output contains no note titles or contents, so it is safe to
+paste into an issue. [OPERATIONS.md](OPERATIONS.md) covers recovering deleted
+notes, restoring backups, and reading the logs.
+
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [AUDIT.md](AUDIT.md) | The production-readiness audit and every finding |
+| [OPERATIONS.md](OPERATIONS.md) | Support, recovery, logs, diagnostics |
+| [SECURITY.md](SECURITY.md) | Threat model, controls, accepted risks |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, layering rules, test conventions |
+| [ROADMAP.md](ROADMAP.md) | What is worth building next, and what is not |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## License
 

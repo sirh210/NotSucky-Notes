@@ -32,6 +32,13 @@ TRASH_DIR_NAME = ".trash"
 #: How long a deleted note is recoverable before it is purged.
 TRASH_RETENTION_DAYS = 30
 
+#: Largest note file that will be read into memory. A note is capped at
+#: 1,000,000 characters, which is at most ~4 MB of UTF-8 plus JSON overhead,
+#: so anything past this is corrupt or hostile. Without the guard a single
+#: oversized file — or a directory of them — is an out-of-memory crash on
+#: startup, since the whole file is read before the content cap applies.
+MAX_NOTE_FILE_BYTES = 8 * 1024 * 1024
+
 
 class StorageError(RuntimeError):
     """Raised when a note could not be read from or written to disk."""
@@ -50,6 +57,21 @@ class FileManager:
     @classmethod
     def ensure_dir(cls) -> Path:
         return cls.directory()
+
+    @classmethod
+    def read_note_file(cls, path: Path) -> Note:
+        """Read and parse one note file, refusing implausibly large ones.
+
+        Raises:
+            ValueError: if the file exceeds :data:`MAX_NOTE_FILE_BYTES`.
+            OSError, json.JSONDecodeError, UnicodeDecodeError: as usual.
+        """
+        size = path.stat().st_size
+        if size > MAX_NOTE_FILE_BYTES:
+            raise ValueError(
+                f"{path.name} is {size} bytes, over the {MAX_NOTE_FILE_BYTES} byte limit"
+            )
+        return Note.from_json(path.read_text(encoding="utf-8"))
 
     @classmethod
     def path_for(cls, note_id: str) -> Path:
@@ -185,7 +207,7 @@ class FileManager:
             return None
 
         try:
-            note = Note.from_json(trash_path.read_text(encoding="utf-8"))
+            note = cls.read_note_file(trash_path)
         except (json.JSONDecodeError, ValueError, UnicodeDecodeError, OSError) as exc:
             logger.error("Cannot restore unreadable trash entry %s: %s", trash_path.name, exc)
             return None
@@ -248,7 +270,7 @@ class FileManager:
 
         for json_file in candidates:
             try:
-                notes.append(Note.from_json(json_file.read_text(encoding="utf-8")))
+                notes.append(cls.read_note_file(json_file))
             except (json.JSONDecodeError, ValueError, UnicodeDecodeError, OSError) as exc:
                 logger.warning("Skipping unreadable note file %s: %s", json_file.name, exc)
         return sort_for_display(notes)
@@ -262,7 +284,7 @@ class FileManager:
             logger.warning("Refusing to load note with unsafe id %r", note_id)
             return None
         try:
-            return Note.from_json(path.read_text(encoding="utf-8"))
+            return cls.read_note_file(path)
         except FileNotFoundError:
             return None
         except (json.JSONDecodeError, ValueError, UnicodeDecodeError, OSError) as exc:
