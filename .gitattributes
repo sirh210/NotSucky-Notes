@@ -1,0 +1,15 @@
+# Normalize to LF in the repository; check out native on Windows.
+# Without this, the Linux and Windows CI jobs see different bytes.
+* text=auto
+
+*.py    text diff=python
+*.md    text
+*.toml  text
+*.txt   text
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text
+
+*.png   binary
+*.ico   binary
+*.zip   binary

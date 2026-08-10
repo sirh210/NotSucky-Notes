@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notsucky-notes"
+version = "1.1.0"
+description = "A sticky notes application with a searchable, drag-to-reorder dashboard"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["notes", "sticky-notes", "pyside6", "qt", "desktop"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: News/Diary",
+]
+dependencies = [
+    "PySide6>=6.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-qt>=4.2.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+]
+
+[project.gui-scripts]
+# Launches without a console window on Windows.
+notsucky-notes = "notsucky.main:main"
+
+[project.scripts]
+# Same program, attached to the terminal, so --help/--version are readable
+# on Windows where a gui-script cannot write to the console.
+notsucky-notes-cli = "notsucky.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["notsucky*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+filterwarnings = ["error::DeprecationWarning:notsucky.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["archive"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",    # long lines are limited by the formatter, not the linter
+    "B008",    # Qt APIs legitimately take calls in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.coverage.run]
+source = ["notsucky"]
+omit = ["notsucky/main.py"]
