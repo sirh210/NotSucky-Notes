@@ -31,10 +31,16 @@ def isolated_notes_dir(tmp_path, monkeypatch):
     monkeypatch.delenv(paths.ENV_NOTES_DIR, raising=False)
 
     paths.set_notes_dir(target)
+    # Settings live beside the notes, so the cached copy has to go too or one
+    # test's theme choice leaks into the next.
+    from notsucky.utils import settings
+
+    settings.reset_cache()
     try:
         yield target
     finally:
         paths.set_notes_dir(None)
+        settings.reset_cache()
 
 
 @pytest.fixture()

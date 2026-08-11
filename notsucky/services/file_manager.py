@@ -17,10 +17,11 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from notsucky.models.note import Note, is_valid_id
+from notsucky.models.note import Note, is_valid_id, normalize_tag
 from notsucky.utils.paths import notes_dir
 
 logger = logging.getLogger(__name__)
@@ -346,16 +347,54 @@ def _fresh_id_avoiding(manager: type[FileManager]) -> str:
     return new_id()  # pragma: no cover - 100 collisions is not a real scenario
 
 
-def filter_notes(notes: list[Note], query: str) -> list[Note]:
-    """Case-insensitive substring filter over title and content.
+def filter_notes(
+    notes: list[Note], query: str, required_tags: Iterable[str] | None = None
+) -> list[Note]:
+    """Filter by text and by tags.
+
+    Text is a case-insensitive substring of the title, the content, or any
+    tag. Tags are combined with AND — selecting two narrows the result rather
+    than widening it, which is what makes a tag filter useful for finding one
+    note instead of a category.
 
     Kept as a free function so the dashboard can filter an already-loaded list
     instead of re-reading every file on each keystroke.
     """
+    wanted = {t for t in (normalize_tag(t) for t in (required_tags or ())) if t}
     needle = query.strip().lower()
+
+    result = notes if not wanted else [n for n in notes if wanted <= set(n.tags)]
     if not needle:
-        return list(notes)
-    return [n for n in notes if needle in n.title.lower() or needle in n.content.lower()]
+        return list(result)
+    return [
+        n
+        for n in result
+        if needle in n.title.lower()
+        or needle in n.content.lower()
+        or any(needle in tag for tag in n.tags)
+    ]
+
+
+def all_tags(notes: Iterable[Note]) -> list[str]:
+    """Every tag in use, most-used first, then alphabetically.
+
+    Frequency ordering puts the tags worth clicking at the front, which
+    matters once there are more than a screenful.
+    """
+    counts: dict[str, int] = {}
+    for note in notes:
+        for tag in note.tags:
+            counts[tag] = counts.get(tag, 0) + 1
+    return sorted(counts, key=lambda tag: (-counts[tag], tag))
+
+
+def tag_counts(notes: Iterable[Note]) -> dict[str, int]:
+    """How many notes carry each tag."""
+    counts: dict[str, int] = {}
+    for note in notes:
+        for tag in note.tags:
+            counts[tag] = counts.get(tag, 0) + 1
+    return counts
 
 
 def sort_for_display(notes: list[Note]) -> list[Note]:

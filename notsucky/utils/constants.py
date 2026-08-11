@@ -25,6 +25,11 @@ MAX_TITLE_LENGTH: Final[int] = 200
 MAX_CONTENT_LENGTH: Final[int] = 1_000_000
 CARD_PREVIEW_LENGTH: Final[int] = 80
 
+#: Caps on *new* tags. A file already holding more, or longer, keeps them.
+MAX_TAG_LENGTH: Final[int] = 30
+MAX_TAGS_PER_NOTE: Final[int] = 20
+CARD_TAG_LIMIT: Final[int] = 4  # chips shown on a card before "+n"
+
 # ─── Grid ─────────────────────────────────────────────────────────
 MIN_CARD_WIDTH: Final[int] = 180
 MIN_CARD_HEIGHT: Final[int] = 150

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from notsucky.utils.constants import (
     CARD_PREVIEW_LENGTH,
+    CARD_TAG_LIMIT,
     COLORS,
     DEFAULT_COLOR_NAME,
     MIN_CARD_HEIGHT,
@@ -55,6 +56,7 @@ def _build_stylesheet() -> str:
         "CardWidget QLabel#cardTitle { font-weight: bold; font-size: 13px; }",
         "CardWidget QLabel#cardPreview { font-size: 11px; }",
         "CardWidget QLabel#cardMeta { font-size: 9px; }",
+        "CardWidget QLabel#cardTags { font-size: 9px; font-weight: bold; }",
         "CardWidget QPushButton#cardDelete {"
         " background: transparent; color: #8B2E24; font-size: 13px;"
         " border: none; border-radius: 10px; }",
@@ -194,6 +196,24 @@ class CardWidget(QWidget):
         status_lbl.setObjectName("cardMeta")
         status_lbl.setEnabled(False)  # renders muted without hard-coding a grey
         layout.addWidget(status_lbl)
+
+        # Tags, as one label rather than a chip per tag: a card can hold
+        # twenty, and twenty widgets per card would undo the grid's
+        # performance work for no visual gain.
+        if note.tags:
+            shown = note.tags[:CARD_TAG_LIMIT]
+            remainder = len(note.tags) - len(shown)
+            chips = "  ".join(
+                f"{highlight(tag, query, accent)}" for tag in shown
+            )
+            if remainder:
+                chips += f"  +{remainder}"
+            tag_lbl = QLabel(chips)
+            tag_lbl.setObjectName("cardTags")
+            tag_lbl.setTextFormat(Qt.TextFormat.RichText)
+            tag_lbl.setWordWrap(True)
+            tag_lbl.setToolTip(", ".join(note.tags))
+            layout.addWidget(tag_lbl)
 
     # ─── Styling ──────────────────────────────────────────────────
 

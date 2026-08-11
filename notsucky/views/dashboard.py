@@ -28,17 +28,14 @@ from notsucky.models.note import Note
 from notsucky.services.file_manager import (
     FileManager,
     StorageError,
+    all_tags,
     filter_notes,
     sort_for_display,
+    tag_counts,
 )
 from notsucky.services.note_service import NoteService
 from notsucky.utils.constants import (
     AUTO_SAVE_INTERVAL_MS,
-    CHROME_BG,
-    CHROME_BORDER,
-    CHROME_PANEL,
-    CHROME_TEXT,
-    CHROME_TEXT_MUTED,
     GRID_CHUNK_SIZE,
     GRID_FIRST_CHUNK,
     GRID_MARGIN,
@@ -50,6 +47,7 @@ from notsucky.utils.constants import (
     color_scheme,
 )
 from notsucky.utils.geometry import columns_for_width
+from notsucky.utils.theme import current_theme, palette, toggle_theme
 from notsucky.views.card_widget import CardWidget
 from notsucky.views.note_widget import NoteWidget
 from notsucky.views.qt_support import close_and_delete, live
@@ -90,6 +88,7 @@ class DashboardWindow(QMainWindow):
         self._columns = 0
         self._built_cards = 0
         self._shutting_down = False
+        self._selected_tags: set[str] = set()
         # Trash paths of deleted notes, most recent last. Survives for the
         # session; the files themselves survive TRASH_RETENTION_DAYS.
         self._undo_stack: list[Path | None] = []
@@ -123,23 +122,7 @@ class DashboardWindow(QMainWindow):
     # ─── Construction ─────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Every rule here is scoped by a selector. A selector-less sheet such
-        # as `setStyleSheet("background: transparent")` applies to the widget
-        # *and every descendant*, which is how the grid container silently
-        # blanked the background of every card inside it.
-        self.setStyleSheet(f"""
-            QMainWindow {{ background-color: {CHROME_BG}; }}
-            QWidget#central {{ background-color: {CHROME_BG}; }}
-            QWidget#header, QWidget#dock {{ background-color: {CHROME_PANEL}; }}
-            QWidget#dock {{ border-top: 1px solid {CHROME_BORDER}; }}
-            QWidget#gridFrame, QWidget#dockContent, QWidget#headerLeft {{
-                background: transparent;
-            }}
-            QScrollArea#gridScroll, QScrollArea#dockScroll {{
-                background: transparent; border: none;
-            }}
-            QStatusBar {{ background-color: {CHROME_PANEL}; color: {CHROME_TEXT_MUTED}; }}
-        """)
+        self._apply_theme()
 
         central = QWidget()
         central.setObjectName("central")
@@ -150,6 +133,7 @@ class DashboardWindow(QMainWindow):
         main_layout.setSpacing(0)
 
         main_layout.addWidget(self._build_header())
+        main_layout.addWidget(self._build_tag_bar())
 
         self.grid_scroll = QScrollArea()
         self.grid_scroll.setObjectName("gridScroll")
@@ -171,6 +155,88 @@ class DashboardWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.statusBar().setSizeGripEnabled(True)
 
+    # ─── Theme ────────────────────────────────────────────────────
+
+    def _apply_theme(self) -> None:
+        """Restyle the shell from the active palette.
+
+        Only chrome is themed. The six note colours are identical in both
+        themes on purpose: a note's colour identifies that note, and having
+        it change with a display setting would make it meaningless.
+
+        Every rule is scoped by a selector. A selector-less sheet such as
+        `setStyleSheet("background: transparent")` applies to the widget *and
+        every descendant*, which is how the grid container once silently
+        blanked the background of every card inside it.
+        """
+        c = palette()
+        self.setStyleSheet(f"""
+            QMainWindow {{ background-color: {c['bg']}; }}
+            QWidget#central {{ background-color: {c['bg']}; }}
+            QWidget#header, QWidget#dock, QWidget#tagBar {{
+                background-color: {c['panel']};
+            }}
+            QWidget#dock {{ border-top: 1px solid {c['border']}; }}
+            QWidget#tagBar {{ border-bottom: 1px solid {c['border']}; }}
+            QWidget#gridFrame, QWidget#dockContent, QWidget#headerLeft,
+            QWidget#tagContent {{
+                background: transparent;
+            }}
+            QScrollArea#gridScroll, QScrollArea#dockScroll,
+            QScrollArea#tagScroll {{
+                background: transparent; border: none;
+            }}
+            QStatusBar {{ background-color: {c['panel']}; color: {c['text_muted']}; }}
+            QLabel#appTitle {{
+                font-size: 19px; font-weight: bold; color: {c['text']};
+                background: transparent;
+            }}
+            QLabel#pathLabel, QLabel#tagBarLabel, QLabel#dockHint {{
+                font-size: 9px; color: {c['text_muted']}; background: transparent;
+            }}
+            QLabel#emptyState {{
+                color: {c['text_muted']}; font-size: 14px; background: transparent;
+            }}
+            QLineEdit#searchInput {{
+                background-color: {c['input_bg']}; color: {c['text']};
+                border: 1px solid {c['border']}; border-radius: 6px;
+                padding: 7px 8px; font-size: 12px;
+            }}
+            QLineEdit#searchInput:focus {{ border: 1px solid #4CAF50; }}
+            QPushButton#chromeButton {{
+                background-color: {c['border']}; color: {c['text']};
+                border: none; border-radius: 6px;
+            }}
+            QPushButton#chromeButton:hover {{ background-color: {c['hover']}; }}
+            QPushButton#newButton {{
+                background-color: #4CAF50; color: white; border: none;
+                border-radius: 6px; font-weight: bold;
+            }}
+            QPushButton#newButton:hover {{ background-color: #45A049; }}
+            QPushButton#tagChip {{
+                background-color: {c['chip_bg']}; color: {c['chip_text']};
+                border: none; border-radius: 9px;
+                padding: 3px 10px; font-size: 10px;
+            }}
+            QPushButton#tagChip:hover {{ background-color: {c['hover']}; }}
+            QPushButton#tagChip:checked {{
+                background-color: {c['chip_active_bg']};
+                color: {c['chip_active_text']}; font-weight: bold;
+            }}
+        """)
+
+    def toggle_theme(self) -> str:
+        """Switch between the light and dark shell, and remember the choice."""
+        name = toggle_theme()
+        self._apply_theme()
+        if hasattr(self, "theme_btn"):
+            self.theme_btn.setText("☾ Dark" if name == "light" else "☀ Light")
+            self.theme_btn.setToolTip(
+                f"Switch to the {'dark' if name == 'light' else 'light'} theme (Ctrl+T)"
+            )
+        self.statusBar().showMessage(f"{name.capitalize()} theme", 3000)
+        return name
+
     def _build_header(self) -> QWidget:
         header = QWidget()
         header.setObjectName("header")
@@ -181,14 +247,10 @@ class DashboardWindow(QMainWindow):
         layout.setSpacing(12)
 
         title_lbl = QLabel("📝 NotSucky Notes")
-        title_lbl.setStyleSheet(
-            f"font-size: 19px; font-weight: bold; color: {CHROME_TEXT}; background: transparent;"
-        )
+        title_lbl.setObjectName("appTitle")
 
         self.path_lbl = QLabel()
-        self.path_lbl.setStyleSheet(
-            f"font-size: 9px; color: {CHROME_TEXT_MUTED}; background: transparent;"
-        )
+        self.path_lbl.setObjectName("pathLabel")
         self.path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         left = QWidget()
@@ -207,48 +269,114 @@ class DashboardWindow(QMainWindow):
         self.search_input.setClearButtonEnabled(True)
         self.search_input.setAccessibleName("Filter notes")
         self.search_input.setFixedWidth(240)
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {CHROME_BORDER}; color: {CHROME_TEXT};
-                border: 1px solid transparent; border-radius: 6px;
-                padding: 7px 8px; font-size: 12px;
-            }}
-            QLineEdit:focus {{ border: 1px solid #4CAF50; }}
-        """)
+        self.search_input.setObjectName("searchInput")
         self.search_input.textChanged.connect(self._on_search_changed)
         layout.addWidget(self.search_input, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         layout.addStretch(1)
 
+        self.theme_btn = QPushButton(
+            "☾ Dark" if current_theme() == "light" else "☀ Light"
+        )
+        self.theme_btn.setObjectName("chromeButton")
+        self.theme_btn.setFixedSize(84, 34)
+        self.theme_btn.setToolTip(
+            f"Switch to the {'dark' if current_theme() == 'light' else 'light'} theme (Ctrl+T)"
+        )
+        self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        layout.addWidget(self.theme_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         refresh_btn = QPushButton("↻ Refresh")
+        refresh_btn.setObjectName("chromeButton")
         refresh_btn.setFixedSize(96, 34)
         refresh_btn.setToolTip("Reload notes from disk (F5)")
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {CHROME_BORDER}; color: {CHROME_TEXT};
-                border: none; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background-color: #50505A; }}
-        """)
         refresh_btn.clicked.connect(lambda: self.reload())
         layout.addWidget(refresh_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         new_btn = QPushButton("+ New Note")
+        new_btn.setObjectName("newButton")
         new_btn.setFixedSize(120, 34)
         new_btn.setToolTip("Create a new note (Ctrl+N)")
         new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        new_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50; color: white; border: none;
-                border-radius: 6px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #45A049; }
-        """)
         new_btn.clicked.connect(self.create_note)
         layout.addWidget(new_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         return header
+
+    # ─── Tag filter bar ───────────────────────────────────────────
+
+    def _build_tag_bar(self) -> QWidget:
+        """A row of toggleable tag chips, hidden until a tag exists."""
+        self.tag_bar = QWidget()
+        self.tag_bar.setObjectName("tagBar")
+        self.tag_bar.setFixedHeight(36)
+
+        bar_layout = QHBoxLayout(self.tag_bar)
+        bar_layout.setContentsMargins(20, 4, 20, 4)
+        bar_layout.setSpacing(8)
+
+        label = QLabel("Tags:")
+        label.setObjectName("tagBarLabel")
+        bar_layout.addWidget(label)
+
+        self.tag_scroll = QScrollArea()
+        self.tag_scroll.setObjectName("tagScroll")
+        self.tag_scroll.setWidgetResizable(True)
+        self.tag_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        self.tag_content = QWidget()
+        self.tag_content.setObjectName("tagContent")
+        self.tag_layout = QHBoxLayout(self.tag_content)
+        self.tag_layout.setContentsMargins(0, 0, 0, 0)
+        self.tag_layout.setSpacing(6)
+        self.tag_layout.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.tag_scroll.setWidget(self.tag_content)
+
+        bar_layout.addWidget(self.tag_scroll, 1)
+        self.tag_bar.setVisible(False)
+        return self.tag_bar
+
+    def _rebuild_tag_bar(self) -> None:
+        """Rebuild the chips from the tags currently in the store."""
+        clear_layout(self.tag_layout)
+
+        tags = all_tags(self._notes)
+        counts = tag_counts(self._notes)
+        # Drop selections whose tag no longer exists on any note.
+        self._selected_tags = {t for t in self._selected_tags if t in counts}
+
+        for tag in tags:
+            chip = QPushButton(f"{tag} ({counts[tag]})")
+            chip.setObjectName("tagChip")
+            chip.setCheckable(True)
+            chip.setChecked(tag in self._selected_tags)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setToolTip(f"Show only notes tagged “{tag}”")
+            chip.setAccessibleName(f"Filter by tag {tag}")
+            chip.clicked.connect(lambda _checked=False, t=tag: self.toggle_tag(t))
+            self.tag_layout.addWidget(chip)
+
+        self.tag_bar.setVisible(bool(tags))
+
+    def toggle_tag(self, tag: str) -> None:
+        """Add or remove a tag from the active filter."""
+        if tag in self._selected_tags:
+            self._selected_tags.discard(tag)
+        else:
+            self._selected_tags.add(tag)
+        self._rebuild_tag_bar()
+        self._rebuild_grid()
+
+    def clear_tag_filter(self) -> None:
+        if self._selected_tags:
+            self._selected_tags.clear()
+            self._rebuild_tag_bar()
+            self._rebuild_grid()
 
     def _build_dock(self) -> QWidget:
         self.dock_frame = QWidget()
@@ -260,9 +388,7 @@ class DashboardWindow(QMainWindow):
         dock_layout.setSpacing(8)
 
         self.dock_hint = QLabel("Minimized:")
-        self.dock_hint.setStyleSheet(
-            f"color: {CHROME_TEXT_MUTED}; font-size: 10px; background: transparent;"
-        )
+        self.dock_hint.setObjectName("dockHint")
         dock_layout.addWidget(self.dock_hint)
 
         self.dock_scroll = QScrollArea()
@@ -294,7 +420,8 @@ class DashboardWindow(QMainWindow):
         QShortcut(QKeySequence.StandardKey.Find, self, self._focus_search)
         QShortcut(QKeySequence.StandardKey.Undo, self, self.undo_delete)
         QShortcut(QKeySequence("Ctrl+E"), self, self.export_notes)
-        QShortcut(QKeySequence("Esc"), self, self._clear_search)
+        QShortcut(QKeySequence("Ctrl+T"), self, self.toggle_theme)
+        QShortcut(QKeySequence("Esc"), self, self._clear_filters)
 
     # ─── Loading ──────────────────────────────────────────────────
 
@@ -315,6 +442,7 @@ class DashboardWindow(QMainWindow):
         known = {n.id for n in self._notes}
         self._minimized_ids = [nid for nid in self._minimized_ids if nid in known]
 
+        self._rebuild_tag_bar()
         self._rebuild_grid()
         self._rebuild_dock()
 
@@ -330,6 +458,11 @@ class DashboardWindow(QMainWindow):
     def _clear_search(self) -> None:
         if self.search_input.text():
             self.search_input.clear()
+
+    def _clear_filters(self) -> None:
+        """Escape clears everything narrowing the grid, text and tags alike."""
+        self._clear_search()
+        self.clear_tag_filter()
 
     # ─── Grid ─────────────────────────────────────────────────────
 
@@ -360,19 +493,20 @@ class DashboardWindow(QMainWindow):
         self._clear_grid()
         columns = self._columns = self._column_count()
 
-        self._visible_notes = filter_notes(self._notes, self.search_input.text())
+        self._visible_notes = filter_notes(
+            self._notes, self.search_input.text(), self._selected_tags
+        )
 
         if not self._visible_notes:
+            filtering = bool(self.search_input.text().strip() or self._selected_tags)
             message = (
                 "No notes match your filter."
-                if self.search_input.text().strip()
+                if filtering
                 else "No notes yet.\nCreate one with “+ New Note” (Ctrl+N)."
             )
             empty = QLabel(message)
+            empty.setObjectName("emptyState")
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setStyleSheet(
-                f"color: {CHROME_TEXT_MUTED}; font-size: 14px; background: transparent;"
-            )
             empty.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.grid_layout.addWidget(empty, 0, 0, 1, columns)
             self.grid_layout.setRowStretch(0, 1)

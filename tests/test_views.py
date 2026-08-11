@@ -395,14 +395,20 @@ class TestNoteWidget:
         # A point in the editor area, below the title bar.
         assert widget.grab().toImage().pixelColor(150, 120).name().upper() == "#C8E6C9"
 
-    def test_the_status_bar_is_also_a_drag_handle(self, qtbot) -> None:
+    def test_the_status_bar_chrome_is_a_drag_handle(self, qtbot) -> None:
+        """The char-count area is inert chrome, so it drags. The tags field
+        beside it is a real control, so it must not."""
         note = NoteService.create(title="T")
         widget = NoteWidget(note)
         qtbot.addWidget(widget)
         widget.show()
         qtbot.waitExposed(widget)
 
-        assert widget._is_drag_handle(widget.status_bar.geometry().center()) is True
+        label = widget.status_label
+        assert widget._is_drag_handle(label.mapTo(widget, label.rect().center())) is True
+
+        tags = widget.tags_input
+        assert widget._is_drag_handle(tags.mapTo(widget, tags.rect().center())) is False
 
     def test_interactive_controls_are_not_drag_handles(self, qtbot) -> None:
         """Pressing the editor, the title field, or a button must not drag."""
@@ -750,6 +756,204 @@ class TestDashboardDeletion:
 
         dashboard.delete_note(note.id)
         assert dashboard._minimized_ids == []
+
+
+class TestTagFilterBar:
+    def _chips(self, dashboard):
+        from PySide6.QtWidgets import QPushButton
+
+        return [
+            b
+            for b in dashboard.tag_content.findChildren(QPushButton)
+            if b.objectName() == "tagChip"
+        ]
+
+    def test_the_bar_is_hidden_with_no_tags(self, dashboard) -> None:
+        NoteService.create(title="untagged")
+        dashboard.reload()
+        assert dashboard.tag_bar.isVisible() is False
+
+    def test_a_chip_appears_for_each_tag(self, dashboard) -> None:
+        note = NoteService.create(title="T")
+        NoteService.set_tags(note, ["work", "home"])
+        dashboard.reload()
+
+        labels = [c.text() for c in self._chips(dashboard)]
+        assert sorted(labels) == ["home (1)", "work (1)"]
+
+    def test_chips_show_how_many_notes_carry_the_tag(self, dashboard) -> None:
+        for _ in range(3):
+            NoteService.set_tags(NoteService.create(title="n"), ["work"])
+        dashboard.reload()
+        assert self._chips(dashboard)[0].text() == "work (3)"
+
+    def test_clicking_a_chip_filters_the_grid(self, dashboard) -> None:
+        tagged = NoteService.create(title="Tagged")
+        NoteService.set_tags(tagged, ["work"])
+        NoteService.create(title="Untagged")
+        dashboard.reload()
+        assert len(dashboard.grid_frame.findChildren(CardWidget)) == 2
+
+        dashboard.toggle_tag("work")
+        cards = dashboard.grid_frame.findChildren(CardWidget)
+        assert [c.note.title for c in cards] == ["Tagged"]
+
+    def test_two_tags_narrow_further(self, dashboard) -> None:
+        both = NoteService.create(title="Both")
+        NoteService.set_tags(both, ["work", "urgent"])
+        one = NoteService.create(title="One")
+        NoteService.set_tags(one, ["work"])
+        dashboard.reload()
+
+        dashboard.toggle_tag("work")
+        dashboard.toggle_tag("urgent")
+        cards = dashboard.grid_frame.findChildren(CardWidget)
+        assert [c.note.title for c in cards] == ["Both"]
+
+    def test_clicking_again_removes_the_filter(self, dashboard) -> None:
+        NoteService.set_tags(NoteService.create(title="T"), ["work"])
+        NoteService.create(title="Other")
+        dashboard.reload()
+
+        dashboard.toggle_tag("work")
+        dashboard.toggle_tag("work")
+        assert len(dashboard.grid_frame.findChildren(CardWidget)) == 2
+
+    def test_escape_clears_tags_as_well_as_text(self, dashboard) -> None:
+        NoteService.set_tags(NoteService.create(title="T"), ["work"])
+        dashboard.reload()
+        dashboard.toggle_tag("work")
+        dashboard.search_input.setText("zzz")
+
+        dashboard._clear_filters()
+        assert dashboard._selected_tags == set()
+        assert dashboard.search_input.text() == ""
+
+    def test_a_selection_is_dropped_when_its_tag_disappears(self, dashboard) -> None:
+        note = NoteService.create(title="T")
+        NoteService.set_tags(note, ["work"])
+        dashboard.reload()
+        dashboard.toggle_tag("work")
+
+        NoteService.set_tags(note, [])
+        dashboard.reload()
+        assert dashboard._selected_tags == set()
+
+    def test_a_card_shows_its_tags(self, dashboard) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.set_tags(NoteService.create(title="T"), ["alpha", "beta"])
+        dashboard.reload()
+
+        card = dashboard.grid_frame.findChildren(CardWidget)[0]
+        text = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "alpha" in text and "beta" in text
+
+    def test_a_card_summarises_many_tags(self, qtbot) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        from notsucky.utils.constants import CARD_TAG_LIMIT
+
+        note = Note(title="T", tags=[f"tag{i}" for i in range(CARD_TAG_LIMIT + 3)])
+        card = CardWidget(note)
+        qtbot.addWidget(card)
+
+        text = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "+3" in text
+
+
+class TestNoteTagEditor:
+    def test_existing_tags_are_shown(self, qtbot) -> None:
+        note = NoteService.create(title="T")
+        NoteService.set_tags(note, ["work", "home"])
+
+        widget = NoteWidget(FileManager.load_by_id(note.id))
+        qtbot.addWidget(widget)
+        assert widget.tags_input.text() == "work, home"
+
+    def test_typing_tags_persists_them(self, qtbot) -> None:
+        note = NoteService.create(title="T")
+        widget = NoteWidget(note)
+        qtbot.addWidget(widget)
+
+        widget.tags_input.setText("Work, Urgent")
+        _flush(widget)
+        assert FileManager.load_by_id(note.id).tags == ["work", "urgent"]
+
+    def test_clearing_the_field_removes_the_tags(self, qtbot) -> None:
+        note = NoteService.create(title="T")
+        NoteService.set_tags(note, ["work"])
+        widget = NoteWidget(FileManager.load_by_id(note.id))
+        qtbot.addWidget(widget)
+
+        widget.tags_input.setText("")
+        _flush(widget)
+        assert FileManager.load_by_id(note.id).tags == []
+
+    def test_tags_do_not_disturb_the_content(self, qtbot) -> None:
+        note = NoteService.create(title="T", content="precious")
+        widget = NoteWidget(note)
+        qtbot.addWidget(widget)
+
+        widget.tags_input.setText("x")
+        _flush(widget)
+        assert FileManager.load_by_id(note.id).content == "precious"
+
+
+class TestThemeToggle:
+    def test_the_dashboard_starts_in_the_stored_theme(self, qtbot) -> None:
+        from notsucky.utils import theme
+
+        theme.set_theme("light")
+        window = DashboardWindow()
+        qtbot.addWidget(window)
+        assert theme.THEMES["light"]["bg"] in window.styleSheet()
+
+    def test_toggling_restyles_the_shell(self, dashboard) -> None:
+        from notsucky.utils import theme
+
+        before = dashboard.styleSheet()
+        name = dashboard.toggle_theme()
+        assert name == "light"
+        assert dashboard.styleSheet() != before
+        assert theme.THEMES["light"]["bg"] in dashboard.styleSheet()
+
+    def test_toggling_twice_returns_to_dark(self, dashboard) -> None:
+        dashboard.toggle_theme()
+        assert dashboard.toggle_theme() == "dark"
+
+    def test_the_choice_survives_a_restart(self, dashboard, qtbot) -> None:
+        from notsucky.utils import theme
+
+        dashboard.toggle_theme()
+        fresh = DashboardWindow()
+        qtbot.addWidget(fresh)
+        assert theme.THEMES["light"]["bg"] in fresh.styleSheet()
+
+    def test_the_button_label_flips(self, dashboard) -> None:
+        dashboard.toggle_theme()
+        assert "Dark" in dashboard.theme_btn.text()
+        dashboard.toggle_theme()
+        assert "Light" in dashboard.theme_btn.text()
+
+    def test_note_colours_do_not_change_with_the_theme(self, dashboard, qtbot) -> None:
+        """A note's colour identifies the note; a display setting must not
+        change what it means."""
+        from notsucky.utils.constants import COLORS
+
+        NoteService.create(title="T", color="Blue")
+        dashboard.reload()
+        card = dashboard.grid_frame.findChildren(CardWidget)[0]
+        dashboard.show()
+        qtbot.waitExposed(dashboard)
+
+        def card_pixel():
+            image = dashboard.grab().toImage()
+            return image.pixelColor(card.mapTo(dashboard, card.rect().center())).name()
+
+        dark_pixel = card_pixel()
+        dashboard.toggle_theme()
+        assert card_pixel() == dark_pixel == COLORS["Blue"]["bg"].lower()
 
 
 class TestSearchHighlighting:

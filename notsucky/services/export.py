@@ -55,7 +55,8 @@ def render(note: Note, fmt: str = "md") -> str:
 
     if fmt == "txt":
         underline = "=" * len(title)
-        return f"{title}\n{underline}\n\n{body}\n"
+        tags = f"Tags: {', '.join(note.tags)}\n" if note.tags else ""
+        return f"{title}\n{underline}\n{tags}\n{body}\n"
 
     # Front matter keeps the metadata machine-readable without cluttering
     # the prose; it is the convention every Markdown notes tool understands.
@@ -64,6 +65,10 @@ def render(note: Note, fmt: str = "md") -> str:
         f"title: {title}",
         f"id: {note.id}",
         f"color: {note.color}",
+    ]
+    if note.tags:
+        front.append(f"tags: {', '.join(note.tags)}")
+    front += [
         f"created: {note.created_at}",
         f"updated: {note.updated_at}",
         "---",

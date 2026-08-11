@@ -11,6 +11,11 @@ plain JSON files on disk and no database.
 - **Drag-to-reorder grid** — drag one card onto another to move it there; the
   arrangement is persisted.
 - **Responsive dashboard** — the column count follows the window width.
+- **Tags** — type them comma-separated at the foot of a note. The dashboard
+  grows a row of tag chips; click to filter, click several to narrow further.
+- **Light and dark shell** — `Ctrl+T` toggles it, and the choice is
+  remembered. Note colours stay the same in both, because a note's colour
+  identifies the note rather than following a display setting.
 - **Six colour themes** — pick one from the swatches in a note's title bar.
 - **Instant filter with highlighting** — search titles and content as you
   type; matches are marked on the cards, and a preview slides to show a match
@@ -103,9 +108,10 @@ notsucky-notes-cli --export ~/notes-txt --export-format txt # plain text
 | --- | --- |
 | `Ctrl+N` | New note |
 | `Ctrl+F` | Focus the filter |
-| `Esc` | Clear the filter |
+| `Esc` | Clear the filter, text and tags |
 | `Ctrl+Z` | Undo the last delete |
 | `Ctrl+E` | Export all notes as Markdown |
+| `Ctrl+T` | Toggle the light/dark shell |
 | `F5` | Reload from disk |
 | `Ctrl+W` | Close the focused note |
 | `Ctrl+M` | Minimize the focused note to the dock |
@@ -134,6 +140,7 @@ Alongside the notes you will find:
 | --- | --- |
 | `notes/` | One JSON file per note |
 | `notes/.trash/` | Deleted notes, kept indefinitely |
+| `settings.json` | Preferences (currently just the theme) |
 | `backups/` | Dated zip snapshots, ten kept |
 | `logs/notsucky.log` | Rotating log, 3 × 1 MB (`--no-log-file` to disable) |
 
@@ -175,6 +182,8 @@ NotSucky-Notes/
 │       ├── paths.py          # storage location resolution & migration
 │       ├── geometry.py       # pure screen-clamping and layout maths
 │       ├── highlight.py      # search match highlighting, Qt-free
+│       ├── theme.py          # light/dark chrome palettes
+│       ├── settings.py       # small atomic preferences file
 │       ├── diagnostics.py    # timings, crash handler, support report
 │       └── logging_config.py
 ├── tests/                    # 408 tests, 92% coverage

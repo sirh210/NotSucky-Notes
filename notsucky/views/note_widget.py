@@ -217,7 +217,17 @@ class NoteWidget(QWidget):
         self.status_label = QLabel(self._char_count_text())
         self.status_label.setObjectName("statusLabel")
         layout.addWidget(self.status_label)
-        layout.addStretch(1)
+
+        # Comma-separated rather than a chip widget: it is one field, it
+        # round-trips predictably, and it can be typed without the mouse.
+        self.tags_input = QLineEdit(", ".join(self.note.tags))
+        self.tags_input.setObjectName("tagsInput")
+        self.tags_input.setPlaceholderText("tags, comma separated")
+        self.tags_input.setAccessibleName("Note tags, comma separated")
+        self.tags_input.setToolTip("Tags for this note, separated by commas")
+        self.tags_input.setClearButtonEnabled(True)
+        self.tags_input.textChanged.connect(lambda _t: self._save_timer.start())
+        layout.addWidget(self.tags_input, stretch=1)
 
         # Frameless windows get no native resize border; the grip restores it.
         grip = QSizeGrip(bar)
@@ -351,6 +361,7 @@ class NoteWidget(QWidget):
         try:
             changed = NoteService.update_title(self.note, self.title_input.text())
             changed |= NoteService.update_content(self.note, self.text_edit.toPlainText())
+            changed |= NoteService.set_tags(self.note, self.tags_input.text())
             changed |= NoteService.update_geometry(
                 self.note, self.x(), self.y(), self.width(), self.height()
             )
@@ -404,6 +415,10 @@ class NoteWidget(QWidget):
                 background: transparent; border: none; color: #232323; font-weight: bold;
             }}
             QLabel#statusLabel {{ color: #3A3A3A; font-size: 10px; }}
+            QLineEdit#tagsInput {{
+                background: transparent; border: none; color: #3A3A3A;
+                font-size: 10px; font-weight: normal;
+            }}
             QLabel#dragHandle {{ color: rgba(0, 0, 0, 0.45); font-size: 13px; }}
             QPushButton#minBtn, QPushButton#closeBtn {{
                 background: transparent; border: none; border-radius: 4px;

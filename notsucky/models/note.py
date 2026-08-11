@@ -15,6 +15,7 @@ from notsucky.utils.constants import (
     DEFAULT_COLOR_NAME,
     DEFAULT_NOTE_HEIGHT,
     DEFAULT_NOTE_WIDTH,
+    MAX_TAG_LENGTH,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
 )
@@ -54,6 +55,41 @@ def _coerce_str(value: Any, default: str = "") -> str:
     return value if isinstance(value, str) else default
 
 
+def normalize_tag(value: Any) -> str | None:
+    """Reduce a tag to its canonical form, or None if it is not usable.
+
+    Tags are lower-cased and internally whitespace-collapsed so that "Work",
+    "work" and "  work " are one tag rather than three. Commas are the
+    separator in the editor, so they cannot appear inside a tag.
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", value.replace(",", " ")).strip().lower()
+    return cleaned[:MAX_TAG_LENGTH] or None
+
+
+def normalize_tags(values: Any) -> list[str]:
+    """Canonicalise a list of tags, dropping blanks and duplicates.
+
+    Order is preserved so the editor round-trips predictably. No cap is
+    applied here: a file that already holds more tags than the editor would
+    allow keeps them, because loading must never quietly discard data.
+    """
+    if isinstance(values, str):  # tolerate a single tag stored as a string
+        values = [values]
+    if not isinstance(values, (list, tuple)):
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        tag = normalize_tag(value)
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return out
+
+
 def _coerce_optional_int(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -78,6 +114,7 @@ class Note:
     height: int = DEFAULT_NOTE_HEIGHT
     minimized: bool = False
     order: int = 0
+    tags: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
 
@@ -93,6 +130,7 @@ class Note:
             self.color = DEFAULT_COLOR_NAME
         self.width = max(MIN_NOTE_WIDTH, self.width)
         self.height = max(MIN_NOTE_HEIGHT, self.height)
+        self.tags = normalize_tags(self.tags)
 
     # ─── Persistence helpers ──────────────────────────────────────
 
@@ -145,6 +183,7 @@ class Note:
             height=_coerce_optional_int(data.get("height")) or DEFAULT_NOTE_HEIGHT,
             minimized=bool(data.get("minimized", False)),
             order=_coerce_optional_int(data.get("order")) or 0,
+            tags=normalize_tags(data.get("tags")),
             created_at=created,
             updated_at=_coerce_str(data.get("updated_at")) or created,
         )

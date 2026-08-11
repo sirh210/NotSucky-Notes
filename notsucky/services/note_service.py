@@ -9,14 +9,16 @@ user that their change did *not* reach the disk.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
-from notsucky.models.note import Note, new_id, utc_now
+from notsucky.models.note import Note, new_id, normalize_tag, normalize_tags, utc_now
 from notsucky.services import backup as backup_service
 from notsucky.services.file_manager import FileManager
 from notsucky.utils.constants import (
     COLORS,
     DEFAULT_COLOR_NAME,
+    MAX_TAGS_PER_NOTE,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
 )
@@ -123,6 +125,45 @@ class NoteService:
         """Flip the minimized flag and return its new value."""
         cls.set_minimized(note, not note.minimized)
         return note.minimized
+
+    # ─── Tags ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def set_tags(note: Note, tags: Iterable[str] | str) -> bool:
+        """Replace a note's tags. Returns False if nothing changed.
+
+        Accepts a list or a comma-separated string, since the editor offers
+        the latter. The per-note cap applies to this path — new input — but
+        never to loading, so a file with more tags keeps them until edited.
+        """
+        if isinstance(tags, str):
+            tags = tags.split(",")
+        wanted = normalize_tags(list(tags))[:MAX_TAGS_PER_NOTE]
+        if wanted == note.tags:
+            return False
+        note.tags = wanted
+        note.touch()
+        FileManager.save_note(note)
+        return True
+
+    @classmethod
+    def add_tag(cls, note: Note, tag: str) -> bool:
+        """Add one tag. Returns False if unusable or already present."""
+        normalized = normalize_tag(tag)
+        if not normalized or normalized in note.tags:
+            return False
+        if len(note.tags) >= MAX_TAGS_PER_NOTE:
+            logger.info("Note %s already has the maximum number of tags", note.id)
+            return False
+        return cls.set_tags(note, [*note.tags, normalized])
+
+    @classmethod
+    def remove_tag(cls, note: Note, tag: str) -> bool:
+        """Remove one tag. Returns False if it was not present."""
+        normalized = normalize_tag(tag)
+        if not normalized or normalized not in note.tags:
+            return False
+        return cls.set_tags(note, [t for t in note.tags if t != normalized])
 
     # ─── Ordering ─────────────────────────────────────────────────
 
