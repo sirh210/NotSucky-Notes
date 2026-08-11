@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -292,6 +293,7 @@ class DashboardWindow(QMainWindow):
         QShortcut(QKeySequence.StandardKey.Refresh, self, lambda: self.reload())
         QShortcut(QKeySequence.StandardKey.Find, self, self._focus_search)
         QShortcut(QKeySequence.StandardKey.Undo, self, self.undo_delete)
+        QShortcut(QKeySequence("Ctrl+E"), self, self.export_notes)
         QShortcut(QKeySequence("Esc"), self, self._clear_search)
 
     # ─── Loading ──────────────────────────────────────────────────
@@ -397,9 +399,10 @@ class DashboardWindow(QMainWindow):
         start = self._built_cards
         end = min(start + count, len(self._visible_notes))
 
+        query = self.search_input.text().strip()
         for index in range(start, end):
             note = self._visible_notes[index]
-            card = CardWidget(note)
+            card = CardWidget(note, query=query)
             card.open_requested.connect(self.open_note)
             card.delete_requested.connect(self.delete_note)
             card.reorder_requested.connect(self._on_reorder)
@@ -598,6 +601,30 @@ class DashboardWindow(QMainWindow):
         self.reload()
         self.statusBar().showMessage(
             f"Moved “{note.title or 'Untitled'}” to the trash — Ctrl+Z to undo", 8000
+        )
+
+    def export_notes(self) -> None:
+        """Export every note as Markdown into a folder the user picks."""
+        from notsucky.services import export as export_service
+
+        if not self._notes:
+            self.statusBar().showMessage("Nothing to export", 3000)
+            return
+
+        directory = QFileDialog.getExistingDirectory(
+            self, "Export all notes as Markdown", str(Path.home())
+        )
+        if not directory:
+            return  # cancelled
+
+        try:
+            written = export_service.export_all(Path(directory), "md")
+        except OSError as exc:
+            self._warn(f"Export failed: {exc}")
+            return
+        self.statusBar().showMessage(
+            f"Exported {len(written)} note{'s' if len(written) != 1 else ''} to {directory}",
+            8000,
         )
 
     def undo_delete(self) -> None:

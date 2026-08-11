@@ -12,7 +12,11 @@ plain JSON files on disk and no database.
   arrangement is persisted.
 - **Responsive dashboard** — the column count follows the window width.
 - **Six colour themes** — pick one from the swatches in a note's title bar.
-- **Instant filter** — search titles and content as you type.
+- **Instant filter with highlighting** — search titles and content as you
+  type; matches are marked on the cards, and a preview slides to show a match
+  buried deep in a long note.
+- **Export** — every note as Markdown or plain text, from the app (`Ctrl+E`)
+  or the command line, so leaving is never harder than arriving.
 - **Debounced auto-save** — a burst of typing produces one write, not one per
   keystroke; edits are also flushed on close, minimize, and quit.
 - **Crash-safe writes** — notes are written atomically, so an interrupted save
@@ -83,6 +87,16 @@ notsucky-notes-cli --list-backups    # show what snapshots exist
 notsucky-notes --no-backup           # start without the daily snapshot
 ```
 
+### Exporting
+
+A backup is for restoring this app; an export is for leaving it. Exports are
+plain files any editor can open:
+
+```bash
+notsucky-notes-cli --export ~/notes-md                      # Markdown
+notsucky-notes-cli --export ~/notes-txt --export-format txt # plain text
+```
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
@@ -91,6 +105,7 @@ notsucky-notes --no-backup           # start without the daily snapshot
 | `Ctrl+F` | Focus the filter |
 | `Esc` | Clear the filter |
 | `Ctrl+Z` | Undo the last delete |
+| `Ctrl+E` | Export all notes as Markdown |
 | `F5` | Reload from disk |
 | `Ctrl+W` | Close the focused note |
 | `Ctrl+M` | Minimize the focused note to the dock |
@@ -147,7 +162,8 @@ NotSucky-Notes/
 │   ├── services/
 │   │   ├── file_manager.py   # atomic file I/O, trash, loading, sorting
 │   │   ├── note_service.py   # business logic; the only writer the views use
-│   │   └── backup.py         # zip snapshots, retention, restore
+│   │   ├── backup.py         # zip snapshots, retention, restore
+│   │   └── export.py         # Markdown / plain-text export
 │   ├── views/
 │   │   ├── dashboard.py      # main window, grid, dock, lifecycle
 │   │   ├── card_widget.py    # grid card; drag source and drop target
@@ -158,6 +174,7 @@ NotSucky-Notes/
 │       ├── constants.py      # colors, limits, timings
 │       ├── paths.py          # storage location resolution & migration
 │       ├── geometry.py       # pure screen-clamping and layout maths
+│       ├── highlight.py      # search match highlighting, Qt-free
 │       ├── diagnostics.py    # timings, crash handler, support report
 │       └── logging_config.py
 ├── tests/                    # 408 tests, 92% coverage

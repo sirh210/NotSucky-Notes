@@ -30,6 +30,7 @@ from notsucky.utils.constants import (
     MIN_CARD_WIDTH,
     NOTE_MIME_TYPE,
 )
+from notsucky.utils.highlight import highlight, preview_around_match
 
 if TYPE_CHECKING:
     from notsucky.models.note import Note
@@ -124,10 +125,13 @@ class CardWidget(QWidget):
     delete_requested = Signal(str)               # note id
     reorder_requested = Signal(str, str)         # source id, target id
 
-    def __init__(self, note: Note, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, note: Note, parent: QWidget | None = None, query: str = ""
+    ) -> None:
         super().__init__(parent)
         ensure_card_styles()
         self.note = note
+        self.query = query
         self._press_pos: QPoint | None = None
         self._drop_active = False
 
@@ -150,8 +154,13 @@ class CardWidget(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(4)
 
-        title_lbl = QLabel(note.title or "Untitled")
+        # Titles and previews are rendered as rich text so matches can be
+        # marked. The note's own text is escaped by highlight(), so a note
+        # containing <b> shows those characters instead of turning bold.
+        accent = COLORS.get(note.color, COLORS[DEFAULT_COLOR_NAME])["accent"]
+        title_lbl = QLabel(highlight(note.title or "Untitled", query, accent))
         title_lbl.setObjectName("cardTitle")
+        title_lbl.setTextFormat(Qt.TextFormat.RichText)
         title_lbl.setWordWrap(True)
         title_row.addWidget(title_lbl, stretch=1)
 
@@ -165,12 +174,13 @@ class CardWidget(QWidget):
         title_row.addWidget(del_btn, alignment=Qt.AlignmentFlag.AlignTop)
         layout.addLayout(title_row)
 
-        # Preview
-        preview = " ".join(note.content.split())
-        if len(preview) > CARD_PREVIEW_LENGTH:
-            preview = preview[:CARD_PREVIEW_LENGTH].rstrip() + "…"
-        preview_lbl = QLabel(preview or "(empty)")
+        # Preview. The window slides to include the match, because a hit 900
+        # characters into a note is invisible if the preview always starts
+        # at the beginning.
+        preview = preview_around_match(note.content, query, CARD_PREVIEW_LENGTH)
+        preview_lbl = QLabel(highlight(preview, query, accent) if preview else "(empty)")
         preview_lbl.setObjectName("cardPreview")
+        preview_lbl.setTextFormat(Qt.TextFormat.RichText)
         preview_lbl.setWordWrap(True)
         preview_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         layout.addWidget(preview_lbl, stretch=1)

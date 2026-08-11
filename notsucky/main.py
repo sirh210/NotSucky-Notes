@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from notsucky import __version__
 
@@ -51,6 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print environment and storage details for a bug report, then exit.",
     )
+    parser.add_argument(
+        "--export",
+        metavar="DIR",
+        help="Export every note as an individual file into DIR, then exit.",
+    )
+    parser.add_argument(
+        "--export-format",
+        default="md",
+        choices=["md", "txt"],
+        help="Format for --export (default: md).",
+    )
     return parser
 
 
@@ -66,6 +78,18 @@ def run_backup_command(args: argparse.Namespace) -> int | None:
         from notsucky.utils.diagnostics import format_diagnostics
 
         print(format_diagnostics())
+        return 0
+
+    if getattr(args, "export", None):
+        from notsucky.services import export as export_service
+
+        written = export_service.export_all(
+            Path(args.export), getattr(args, "export_format", "md")
+        )
+        if not written:
+            print("No notes to export.")
+            return 0
+        print(f"Exported {len(written)} note(s) to {Path(args.export).resolve()}")
         return 0
 
     if args.list_backups:

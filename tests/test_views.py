@@ -752,6 +752,105 @@ class TestDashboardDeletion:
         assert dashboard._minimized_ids == []
 
 
+class TestSearchHighlighting:
+    def test_a_matching_card_marks_the_match(self, dashboard) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.create(title="Groceries", content="buy milk and bread")
+        dashboard.reload()
+        dashboard.search_input.setText("milk")
+        dashboard._rebuild_grid()
+
+        card = dashboard.grid_frame.findChildren(CardWidget)[0]
+        markup = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "<span" in markup and "milk</span>" in markup
+
+    def test_no_query_means_no_markup(self, dashboard) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.create(title="Plain", content="nothing special")
+        dashboard.reload()
+
+        card = dashboard.grid_frame.findChildren(CardWidget)[0]
+        markup = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "<span" not in markup
+
+    def test_a_note_containing_html_is_not_rendered_as_html(self, qtbot) -> None:
+        """The card must show <b> as characters, not turn the text bold."""
+        from PySide6.QtWidgets import QLabel
+
+        card = CardWidget(Note(title="T", content="<b>not bold</b>"), query="bold")
+        qtbot.addWidget(card)
+        markup = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "&lt;b&gt;" in markup
+        assert "<b>" not in markup
+
+    def test_the_preview_slides_to_show_a_late_match(self, dashboard) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.create(title="Long", content=("filler " * 200) + "needle here")
+        dashboard.reload()
+        dashboard.search_input.setText("needle")
+        dashboard._rebuild_grid()
+
+        card = dashboard.grid_frame.findChildren(CardWidget)[0]
+        markup = " ".join(lbl.text() for lbl in card.findChildren(QLabel))
+        assert "needle" in markup
+
+
+class TestDashboardExport:
+    def test_export_writes_every_note(self, dashboard, tmp_path, monkeypatch) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        for title in ("one", "two"):
+            NoteService.create(title=title, content="body")
+        dashboard.reload()
+
+        target = tmp_path / "exported"
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", lambda *a, **k: str(target)
+        )
+        dashboard.export_notes()
+
+        assert len(list(target.glob("*.md"))) == 2
+        assert "Exported 2 notes" in dashboard.statusBar().currentMessage()
+
+    def test_cancelling_the_dialog_writes_nothing(
+        self, dashboard, tmp_path, monkeypatch
+    ) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        NoteService.create(title="one")
+        dashboard.reload()
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
+
+        dashboard.export_notes()
+        assert list(tmp_path.rglob("*.md")) == []
+
+    def test_exporting_an_empty_store_says_so(self, dashboard) -> None:
+        dashboard.export_notes()
+        assert "Nothing to export" in dashboard.statusBar().currentMessage()
+
+    def test_a_failing_export_is_reported_not_raised(
+        self, dashboard, tmp_path, monkeypatch
+    ) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        from notsucky.services import export as export_service
+
+        NoteService.create(title="one")
+        dashboard.reload()
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path)
+        )
+        monkeypatch.setattr(
+            export_service, "export_all", lambda *a, **k: (_ for _ in ()).throw(OSError("full"))
+        )
+
+        dashboard.export_notes()
+        assert "Export failed" in dashboard.statusBar().currentMessage()
+
+
 class TestDashboardUndo:
     @pytest.fixture()
     def confirm_delete(self, monkeypatch):
