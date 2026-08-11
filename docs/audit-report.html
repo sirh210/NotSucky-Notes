@@ -194,7 +194,15 @@
       font-family: var(--mono); font-size: 0.87em;
       background: var(--surface-alt); padding: 1px 5px; border-radius: 2px;
       color: var(--ink);
+      /* Identifiers like setuptools.backends._legacy:_Backend have no break
+         opportunity, so they set the minimum width of everything containing
+         them and push the whole page sideways. At 400% zoom that is a WCAG
+         1.4.10 failure; breaking mid-token is the lesser evil. */
+      overflow-wrap: anywhere;
     }
+
+    /* Prose should never be the thing that forces a horizontal scrollbar. */
+    p, li, td, th, h1, h2, h3 { overflow-wrap: break-word; }
   }
 
   @layer layout {
@@ -428,15 +436,17 @@
     li strong { color: var(--ink); font-weight: 650; }
     li::marker { color: var(--ink-faint); }
 
+    .prose { margin: 0; max-width: 72ch; color: var(--ink-soft); }
+    .prose strong { color: var(--ink); font-weight: 650; }
 
-    /* Available to a screen reader, absent from the visual design. */
+    /* Available to a screen reader, absent from the visual design. Used for
+       table captions and for the opening section's heading, which the
+       design conveys through the layout but the outline still needs. */
     .sr-only {
       position: absolute; width: 1px; height: 1px; padding: 0;
       margin: -1px; overflow: hidden; clip-path: inset(50%);
       white-space: nowrap; border: 0;
     }
-    .prose { margin: 0; max-width: 72ch; color: var(--ink-soft); }
-    .prose strong { color: var(--ink); font-weight: 650; }
 
     .recs {
       background: var(--surface); border: 1px solid var(--rule);
@@ -560,7 +570,8 @@
     </div>
   </header>
 
-  <section>
+  <section aria-labelledby="h-verdict">
+    <h2 id="h-verdict" class="sr-only">Verdict</h2>
     <div class="verdict">
       <p class="lead">The audited version could not start. <code>card_widget.py</code> raised
         <code>ImportError</code> at import time, and the dashboard imports it on every grid
@@ -584,10 +595,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-01-the-application-could-not-run">
     <div class="sec-head">
       <span class="sec-num">01</span>
-      <h2>The application could not run</h2>
+      <h2 id="h-01-the-application-could-not-run">The application could not run</h2>
       <span class="sec-tag t-blocker">Blocker</span>
     </div>
 
@@ -624,10 +635,10 @@
       building a wheel and importing all subpackages from a clean virtualenv.</div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-02-data-loss-and-data-location">
     <div class="sec-head">
       <span class="sec-num">02</span>
-      <h2>Data loss and data location</h2>
+      <h2 id="h-02-data-loss-and-data-location">Data loss and data location</h2>
       <span class="sec-tag t-critical">Critical</span>
     </div>
 
@@ -687,10 +698,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-03-functional-defects">
     <div class="sec-head">
       <span class="sec-num">03</span>
-      <h2>Functional defects</h2>
+      <h2 id="h-03-functional-defects">Functional defects</h2>
       <span class="sec-tag t-high">High</span>
     </div>
 
@@ -792,10 +803,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-04-correctness-and-performance">
     <div class="sec-head">
       <span class="sec-num">04</span>
-      <h2>Correctness and performance</h2>
+      <h2 id="h-04-correctness-and-performance">Correctness and performance</h2>
       <span class="sec-tag t-medium">Medium</span>
     </div>
     <div class="table-wrap" tabindex="0" role="region"
@@ -824,10 +835,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-05-the-test-suite-was-reporting-confidence">
     <div class="sec-head">
       <span class="sec-num">05</span>
-      <h2>The test suite was reporting confidence it had not earned</h2>
+      <h2 id="h-05-the-test-suite-was-reporting-confidence">The test suite was reporting confidence it had not earned</h2>
       <span class="sec-tag t-critical">Critical</span>
     </div>
     <ul>
@@ -852,10 +863,10 @@
       Named regression tests exist for 3.1, 3.3, 3.6, 3.7, 3.8, 3.9 and 3.10.</p>
   </section>
 
-  <section>
+  <section aria-labelledby="h-06-removed-code">
     <div class="sec-head">
       <span class="sec-num">06</span>
-      <h2>Removed code</h2>
+      <h2 id="h-06-removed-code">Removed code</h2>
       <span class="sec-tag t-medium">Cleanup</span>
     </div>
     <p class="prose">A 22 KB <code>main.py</code> in the repository root was a copy of the original
@@ -869,10 +880,10 @@
       The directory is excluded from linting and from the wheel.</p>
   </section>
 
-  <section>
+  <section aria-labelledby="h-07-recommendations-all-implemented">
     <div class="sec-head">
       <span class="sec-num">07</span>
-      <h2>Recommendations — all implemented</h2>
+      <h2 id="h-07-recommendations-all-implemented">Recommendations — all implemented</h2>
       <span class="sec-tag t-medium">Done</span>
     </div>
     <div class="recs">
@@ -898,10 +909,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-08-follow-up-review">
     <div class="sec-head">
       <span class="sec-num">08</span>
-      <h2>Follow-up review</h2>
+      <h2 id="h-08-follow-up-review">Follow-up review</h2>
       <span class="sec-tag t-critical">Second pass</span>
     </div>
 
@@ -972,10 +983,10 @@
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-09-two-guarantees-and-the-three-things-that">
     <div class="sec-head">
       <span class="sec-num">09</span>
-      <h2>Two guarantees, and the three things that broke them</h2>
+      <h2 id="h-09-two-guarantees-and-the-three-things-that">Two guarantees, and the three things that broke them</h2>
       <span class="sec-tag t-blocker">1.3.0</span>
     </div>
 
@@ -1032,10 +1043,10 @@ after 365 launches: 8 files
     </div>
   </section>
 
-  <section>
+  <section aria-labelledby="h-10-this-page-audited-against-its-own-checkl">
     <div class="sec-head">
       <span class="sec-num">10</span>
-      <h2>This page, audited against its own checklist</h2>
+      <h2 id="h-10-this-page-audited-against-its-own-checkl">This page, audited against its own checklist</h2>
       <span class="sec-tag t-medium">Meta</span>
     </div>
 
@@ -1089,12 +1100,12 @@ after 365 launches: 8 files
     </div>
   </section>
 
+
+</main>
   <footer>
     <span>NotSucky Notes v1.3.0</span>
     <span>443 tests · 92% coverage · ruff, mypy, pip-audit clean</span>
     <span>Full report: AUDIT.md · CHANGELOG.md · SECURITY.md</span>
   </footer>
-
-</main>
 </body>
 </html>

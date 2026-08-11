@@ -9,6 +9,7 @@ only, so the suite stays offline and deterministic.
 
 from __future__ import annotations
 
+import itertools
 import re
 from pathlib import Path
 
@@ -228,6 +229,39 @@ class TestStandaloneReport:
     def test_it_uses_semantic_landmarks(self, html) -> None:
         for tag in ("<main", "<header", "<footer", "<section"):
             assert tag in html, f"missing {tag}"
+
+    def test_there_is_exactly_one_main(self, html) -> None:
+        assert html.count("<main") == 1
+
+    def test_the_footer_is_outside_main(self, html) -> None:
+        """A <footer> nested in <main> is a generic element, not a
+        contentinfo landmark."""
+        assert html.rfind("<footer") > html.rfind("</main>")
+
+    def test_every_section_is_a_named_region(self, html) -> None:
+        """A <section> with no accessible name is not a landmark at all, so
+        none of them would be reachable by landmark navigation."""
+        sections = re.findall(r"<section([^>]*)>", html)
+        unnamed = [s for s in sections if "aria-labelledby" not in s and "aria-label" not in s]
+        assert unnamed == [], f"{len(unnamed)} unnamed sections"
+
+    def test_aria_references_resolve(self, html) -> None:
+        ids = set(re.findall(r'\sid="([^"]+)"', html))
+        referenced = set(re.findall(r'aria-labelledby="([^"]+)"', html))
+        assert referenced <= ids, f"dangling: {referenced - ids}"
+
+    def test_heading_levels_never_skip(self, html) -> None:
+        levels = [int(n) for n in re.findall(r"<h([1-6])[ >]", html)]
+        assert levels and levels[0] == 1, "document must open with an h1"
+        for previous, current in itertools.pairwise(levels):
+            assert current <= previous + 1, f"h{previous} jumps to h{current}"
+
+    def test_long_identifiers_can_wrap(self, html) -> None:
+        """An unbreakable token in <code> sets the minimum width of the whole
+        page, which breaks reflow at 400% zoom (WCAG 1.4.10)."""
+        style = self.stylesheet(html)
+        code_rule = re.search(r"(?ms)^\s*code \{(.*?)\}", style)
+        assert code_rule and "overflow-wrap" in code_rule.group(1)
 
     def test_specificity_stays_flat(self, html) -> None:
         """No ID selectors, and no !important outside the reduced-motion
