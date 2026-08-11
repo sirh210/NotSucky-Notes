@@ -758,6 +758,129 @@ class TestDashboardDeletion:
         assert dashboard._minimized_ids == []
 
 
+class TestStatsDialog:
+    def _dialog(self, qtbot, notes=None, **kwargs):
+        from notsucky.services.statistics import compute
+        from notsucky.views.stats_dialog import StatsDialog
+
+        stats = compute(notes if notes is not None else [], **kwargs)
+        dialog = StatsDialog(stats)
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_it_opens_with_an_empty_store(self, qtbot) -> None:
+        dialog = self._dialog(qtbot)
+        assert dialog.windowTitle() == "Statistics"
+
+    def test_the_tiles_report_the_totals(self, qtbot, notes_dir) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        for index in range(3):
+            NoteService.create(title=f"n{index}", content="two words")
+        dialog = self._dialog(qtbot, FileManager.load_all())
+
+        values = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+        assert "3" in values          # notes
+        assert "6" in values          # words
+
+    def test_the_headline_names_the_longest_note(self, qtbot, notes_dir) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.create(title="Short", content="a")
+        NoteService.create(title="Winner", content="a" * 500)
+        dialog = self._dialog(qtbot, FileManager.load_all())
+
+        text = " ".join(lbl.text() for lbl in dialog.findChildren(QLabel))
+        assert "Winner" in text
+        assert "Longest note" in text
+
+    def test_the_colour_bars_are_not_colour_coded(self, qtbot, notes_dir) -> None:
+        """The six note pastels fail every categorical-palette check — the
+        worst adjacent pair sits at ΔE 8 for *normal* vision, where the floor
+        is 15 — so identity here is the written name, not the mark."""
+        from notsucky.views.stats_dialog import BAR_HUE, RankedBars
+
+        NoteService.create(title="a", color="Blue")
+        NoteService.create(title="b", color="Green")
+        dialog = self._dialog(qtbot, FileManager.load_all())
+        dialog.show()
+        qtbot.waitExposed(dialog)
+
+        bars = dialog.findChildren(RankedBars)
+        assert bars, "no ranked breakdown rendered"
+        widget = bars[0]
+        image = widget.grab().toImage()
+
+        # Sample only the plotting region, past the swatch and the name. The
+        # swatch may legitimately show the pastel — it aids recognition — but
+        # the mark that encodes the value must not.
+        bar_region = {
+            image.pixelColor(x, y).name()
+            for y in range(0, widget.height(), 2)
+            for x in range(95, widget.width() - 40, 2)
+        }
+        assert BAR_HUE["dark"].lower() in bar_region
+        for pastel in ("#bbdefb", "#c8e6c9", "#fff9c4", "#f8bbd0"):
+            assert pastel not in bar_region, f"{pastel} used as an encoding mark"
+
+    def test_the_colour_names_are_written_out(self, qtbot, notes_dir) -> None:
+        from notsucky.views.stats_dialog import RankedBars
+
+        NoteService.create(title="a", color="Blue")
+        dialog = self._dialog(qtbot, FileManager.load_all())
+        bars = dialog.findChildren(RankedBars)[0]
+        assert "Blue" in bars.accessibleName()
+
+    def test_the_activity_chart_reports_its_data_to_assistive_tech(
+        self, qtbot, notes_dir
+    ) -> None:
+        from notsucky.views.stats_dialog import ActivityChart
+
+        NoteService.create(title="a")
+        dialog = self._dialog(qtbot, FileManager.load_all())
+        chart = dialog.findChildren(ActivityChart)[0]
+        assert chart.accessibleName()
+        assert chart.toolTip()
+
+    def test_an_empty_activity_window_says_so_rather_than_drawing_nothing(
+        self, qtbot
+    ) -> None:
+        from notsucky.views.stats_dialog import ActivityChart
+
+        dialog = self._dialog(qtbot)
+        chart = dialog.findChildren(ActivityChart)[0]
+        assert chart.peak == 0
+        chart.grab()  # must paint the "no edits" state without raising
+
+    def test_no_tags_shows_guidance_not_an_empty_chart(self, qtbot, notes_dir) -> None:
+        from PySide6.QtWidgets import QLabel
+
+        NoteService.create(title="untagged")
+        dialog = self._dialog(qtbot, FileManager.load_all())
+        text = " ".join(lbl.text() for lbl in dialog.findChildren(QLabel))
+        assert "No tags yet" in text
+
+    def test_it_follows_the_active_theme(self, qtbot, notes_dir) -> None:
+        from notsucky.utils import theme
+
+        theme.set_theme("light")
+        dialog = self._dialog(qtbot)
+        assert theme.THEMES["light"]["bg"] in dialog.styleSheet()
+
+    def test_the_dashboard_can_open_it(self, dashboard, monkeypatch) -> None:
+        from notsucky.views import stats_dialog
+
+        NoteService.create(title="a")
+        dashboard.reload()
+        opened = {}
+        monkeypatch.setattr(
+            stats_dialog.StatsDialog, "exec", lambda self: opened.setdefault("yes", self)
+        )
+
+        dashboard.show_statistics()
+        assert opened["yes"].stats.total_notes == 1
+
+
 class TestTagFilterBar:
     def _chips(self, dashboard):
         from PySide6.QtWidgets import QPushButton

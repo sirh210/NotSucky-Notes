@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from notsucky.models.note import Note
+from notsucky.services import backup
 from notsucky.services.file_manager import (
     FileManager,
     StorageError,
@@ -275,6 +276,14 @@ class DashboardWindow(QMainWindow):
 
         layout.addStretch(1)
 
+        stats_btn = QPushButton("📊 Stats")
+        stats_btn.setObjectName("chromeButton")
+        stats_btn.setFixedSize(88, 34)
+        stats_btn.setToolTip("Show statistics about your notes (Ctrl+I)")
+        stats_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        stats_btn.clicked.connect(self.show_statistics)
+        layout.addWidget(stats_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self.theme_btn = QPushButton(
             "☾ Dark" if current_theme() == "light" else "☀ Light"
         )
@@ -421,6 +430,7 @@ class DashboardWindow(QMainWindow):
         QShortcut(QKeySequence.StandardKey.Undo, self, self.undo_delete)
         QShortcut(QKeySequence("Ctrl+E"), self, self.export_notes)
         QShortcut(QKeySequence("Ctrl+T"), self, self.toggle_theme)
+        QShortcut(QKeySequence("Ctrl+I"), self, self.show_statistics)
         QShortcut(QKeySequence("Esc"), self, self._clear_filters)
 
     # ─── Loading ──────────────────────────────────────────────────
@@ -736,6 +746,18 @@ class DashboardWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Moved “{note.title or 'Untitled'}” to the trash — Ctrl+Z to undo", 8000
         )
+
+    def show_statistics(self) -> None:
+        """Open the read-only statistics summary."""
+        from notsucky.services.statistics import compute
+        from notsucky.views.stats_dialog import StatsDialog
+
+        stats = compute(
+            self._notes,
+            trash_count=len(FileManager.list_trash()),
+            backup_count=len(backup.list_backups()),
+        )
+        StatsDialog(stats, self).exec()
 
     def export_notes(self) -> None:
         """Export every note as Markdown into a folder the user picks."""

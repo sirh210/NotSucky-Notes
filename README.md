@@ -22,6 +22,8 @@ plain JSON files on disk and no database.
   buried deep in a long note.
 - **Export** — every note as Markdown or plain text, from the app (`Ctrl+E`)
   or the command line, so leaving is never harder than arriving.
+- **Statistics** — `Ctrl+I` for totals, the longest note, your most-used
+  colour and tags, and edits per day. Also `--stats` as plain text.
 - **Debounced auto-save** — a burst of typing produces one write, not one per
   keystroke; edits are also flushed on close, minimize, and quit.
 - **Crash-safe writes** — notes are written atomically, so an interrupted save
@@ -112,6 +114,7 @@ notsucky-notes-cli --export ~/notes-txt --export-format txt # plain text
 | `Ctrl+Z` | Undo the last delete |
 | `Ctrl+E` | Export all notes as Markdown |
 | `Ctrl+T` | Toggle the light/dark shell |
+| `Ctrl+I` | Show statistics |
 | `F5` | Reload from disk |
 | `Ctrl+W` | Close the focused note |
 | `Ctrl+M` | Minimize the focused note to the dock |
@@ -170,11 +173,13 @@ NotSucky-Notes/
 │   │   ├── file_manager.py   # atomic file I/O, trash, loading, sorting
 │   │   ├── note_service.py   # business logic; the only writer the views use
 │   │   ├── backup.py         # zip snapshots, retention, restore
-│   │   └── export.py         # Markdown / plain-text export
+│   │   ├── export.py         # Markdown / plain-text export
+│   │   └── statistics.py     # figures for the stats view, Qt-free
 │   ├── views/
 │   │   ├── dashboard.py      # main window, grid, dock, lifecycle
 │   │   ├── card_widget.py    # grid card; drag source and drop target
 │   │   ├── note_widget.py    # floating note window
+│   │   ├── stats_dialog.py   # statistics view and its charts
 │   │   ├── qt_support.py     # Qt object-lifetime helpers
 │   │   └── icon.py           # application icon, drawn at runtime
 │   └── utils/
@@ -243,6 +248,7 @@ behind them.
 
 ```bash
 notsucky-notes-cli --diagnostics    # versions, paths, and store counts
+notsucky-notes-cli --stats          # totals, colours, tags, recent activity
 notsucky-notes --log-level DEBUG    # verbose logging
 ```
 

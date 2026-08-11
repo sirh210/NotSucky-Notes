@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print environment and storage details for a bug report, then exit.",
     )
     parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Print statistics about your notes, then exit.",
+    )
+    parser.add_argument(
         "--export",
         metavar="DIR",
         help="Export every note as an individual file into DIR, then exit.",
@@ -78,6 +83,12 @@ def run_backup_command(args: argparse.Namespace) -> int | None:
         from notsucky.utils.diagnostics import format_diagnostics
 
         print(format_diagnostics())
+        return 0
+
+    if getattr(args, "stats", False):
+        from notsucky.services.statistics import format_report
+
+        print(format_report())
         return 0
 
     if getattr(args, "export", None):
