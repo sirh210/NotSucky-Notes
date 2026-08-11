@@ -6,6 +6,19 @@
 <title>NotSucky Notes — Production Readiness Audit</title>
 <meta name="description" content="Production-readiness audit of NotSucky Notes: the blockers that stopped it starting, the data-loss and security holes behind them, the performance work, and the guarantees added in v1.3.0.">
 <meta name="color-scheme" content="light dark">
+<!-- The document is entirely self-contained, so it can afford the strictest
+     policy there is: deny everything, then allow only the inline stylesheet
+     it carries and the data: URI of its own favicon. Any injected script,
+     tracking pixel, or external fetch is refused. 'unsafe-inline' is
+     unavoidable for style here because a static file has no nonce, and it
+     cannot be exploited without a script to inject it.
+     frame-ancestors, X-Frame-Options, HSTS, Permissions-Policy and
+     X-Content-Type-Options are deliberately absent: they are ignored in a
+     <meta> tag and only mean anything as response headers, so declaring
+     them here would be security theatre. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
 <style>
     :root { color-scheme: light dark; }
