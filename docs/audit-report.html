@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NotSucky Notes — Production Readiness Audit</title>
+<meta name="description" content="Production-readiness audit of NotSucky Notes: the blockers that stopped it starting, the data-loss and security holes behind them, the performance work, and the guarantees added in v1.3.0.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text x='0' y='13'>&#128269;</text></svg>">
+<style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; padding: 0; }
+    img { max-width: 100%; }
+</style>
+<style>
+
+  /* ═══════════════════════════════════════════════════════════════
+     Cascade layers, in priority order. Everything below lives in a
+     layer, so ordering is decided here once rather than argued about
+     with specificity — there is not an !important in the file.
+
+     The one exception is the `body` rule further down, which is
+     deliberately left UNLAYERED: the host page injects its own reset
+     (`body{font:14px…;background:#faf9f5;color:#141413}`) as unlayered
+     CSS, and unlayered declarations beat every layer no matter how
+     late. A layered body rule would silently lose, and the page would
+     render the host's light background under our dark theme.
+     ═══════════════════════════════════════════════════════════════ */
+  @layer tokens, base, layout, components, state, responsive;
+
+  /* ── Typed design tokens ──────────────────────────────────────────
+     Registering the colours gives them a type (a malformed value falls
+     back to the initial value instead of poisoning the cascade) and,
+     more usefully here, makes them animatable — which is what lets the
+     light/dark swap cross-fade in pure CSS further down. */
+  @property --ground      { syntax: "<color>"; inherits: true; initial-value: #F8F7F3; }
+  @property --surface     { syntax: "<color>"; inherits: true; initial-value: #FFFFFF; }
+  @property --surface-alt { syntax: "<color>"; inherits: true; initial-value: #F1EFE8; }
+  @property --ink         { syntax: "<color>"; inherits: true; initial-value: #1B1A17; }
+  @property --ink-soft    { syntax: "<color>"; inherits: true; initial-value: #5D5A52; }
+  @property --ink-faint   { syntax: "<color>"; inherits: true; initial-value: #747066; }
+  @property --rule        { syntax: "<color>"; inherits: true; initial-value: #E2DFD5; }
+  @property --rule-strong { syntax: "<color>"; inherits: true; initial-value: #CFCBBE; }
+  @property --accent      { syntax: "<color>"; inherits: true; initial-value: #906A00; }
+  @property --sev-blocker { syntax: "<color>"; inherits: true; initial-value: #B3261E; }
+  @property --sev-critical{ syntax: "<color>"; inherits: true; initial-value: #B45309; }
+  @property --sev-high    { syntax: "<color>"; inherits: true; initial-value: #7C6210; }
+  @property --sev-medium  { syntax: "<color>"; inherits: true; initial-value: #3F6296; }
+  @property --sev-good    { syntax: "<color>"; inherits: true; initial-value: #2F6B3A; }
+  @property --stripe      { syntax: "<color>"; inherits: false; initial-value: #CFCBBE; }
+
+  @layer tokens {
+    /* Colours are OKLCH: lightness is perceptual, so the light and dark
+       ramps step evenly by eye rather than by sRGB arithmetic, and a
+       token can be re-tuned for contrast by moving L alone — which is
+       exactly how --ink-faint and --accent were brought to AA below. */
+    :root {
+      --ground:       oklch(97.6% 0.0054 95.1);
+      --surface:      oklch(100% 0 0);
+      --surface-alt:  oklch(95.2% 0.0096 93.6);
+      --ink:          oklch(21.8% 0.0059 91.6);
+      --ink-soft:     oklch(46.8% 0.0132 89.8);
+      --ink-faint:    oklch(54.5% 0.0155 88.7);   /* AA: 4.63:1 */
+      --rule:         oklch(90.3% 0.0138 93.0);
+      --rule-strong:  oklch(84.2% 0.0183 92.7);
+      --accent:       oklch(54.8% 0.1138 84.2);   /* AA: 4.61:1 */
+
+      --sev-blocker:  oklch(50.1% 0.1783 28.7);
+      --sev-critical: oklch(55.5% 0.1455 49.0);
+      --sev-high:     oklch(50.8% 0.0982 89.2);
+      --sev-medium:   oklch(49.4% 0.0932 258.1);
+      --sev-good:     oklch(47.5% 0.0998 147.7);
+
+      /* Washes derive from the semantic hues, so they retune with them. */
+      --blocker-wash: oklch(50.1% 0.1783 28.7 / 0.07);
+      --good-wash:    oklch(47.5% 0.0998 147.7 / 0.09);
+
+      --shadow: 0 1px 2px oklch(21.8% 0.0059 91.6 / 0.05),
+                0 8px 24px -16px oklch(21.8% 0.0059 91.6 / 0.25);
+
+      --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+      --step: 0.25rem;
+    }
+
+    /* Dark tokens are declared twice on purpose: once for the OS
+       preference (guarded so an explicit light choice still wins) and
+       once for the host's explicit stamp. Only tokens change — no
+       component ever redefines a colour inside a media query. */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --ground:       oklch(20.3% 0.0080 297.1);
+        --surface:      oklch(23.8% 0.0096 294.8);
+        --surface-alt:  oklch(26.5% 0.0132 298.6);
+        --ink:          oklch(94.0% 0.0070 88.6);
+        --ink-soft:     oklch(71.9% 0.0180 88.0);
+        --ink-faint:    oklch(62.4% 0.0157 88.7);   /* AA: 4.62:1 */
+        --rule:         oklch(31.2% 0.0164 300.6);
+        --rule-strong:  oklch(38.3% 0.0191 302.0);
+        --accent:       oklch(88.5% 0.1816 94.9);
+
+        --sev-blocker:  oklch(70.9% 0.1831 27.7);
+        --sev-critical: oklch(74.4% 0.1561 61.5);
+        --sev-high:     oklch(79.9% 0.1350 94.8);
+        --sev-medium:   oklch(72.9% 0.1029 258.3);
+        --sev-good:     oklch(76.7% 0.1347 149.7);
+
+        --blocker-wash: oklch(70.9% 0.1831 27.7 / 0.10);
+        --good-wash:    oklch(76.7% 0.1347 149.7 / 0.10);
+
+        --shadow: 0 1px 2px oklch(0% 0 0 / 0.4), 0 8px 24px -16px oklch(0% 0 0 / 0.8);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --ground:       oklch(20.3% 0.0080 297.1);
+      --surface:      oklch(23.8% 0.0096 294.8);
+      --surface-alt:  oklch(26.5% 0.0132 298.6);
+      --ink:          oklch(94.0% 0.0070 88.6);
+      --ink-soft:     oklch(71.9% 0.0180 88.0);
+      --ink-faint:    oklch(62.4% 0.0157 88.7);
+      --rule:         oklch(31.2% 0.0164 300.6);
+      --rule-strong:  oklch(38.3% 0.0191 302.0);
+      --accent:       oklch(88.5% 0.1816 94.9);
+
+      --sev-blocker:  oklch(70.9% 0.1831 27.7);
+      --sev-critical: oklch(74.4% 0.1561 61.5);
+      --sev-high:     oklch(79.9% 0.1350 94.8);
+      --sev-medium:   oklch(72.9% 0.1029 258.3);
+      --sev-good:     oklch(76.7% 0.1347 149.7);
+
+      --blocker-wash: oklch(70.9% 0.1831 27.7 / 0.10);
+      --good-wash:    oklch(76.7% 0.1347 149.7 / 0.10);
+
+      --shadow: 0 1px 2px oklch(0% 0 0 / 0.4), 0 8px 24px -16px oklch(0% 0 0 / 0.8);
+    }
+  }
+
+  /* UNLAYERED — must outrank the host's unlayered reset. See the note at
+     the top of this file. color-scheme is set here for the same reason:
+     it makes scrollbars and form controls follow the theme. */
+  :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    /* rem throughout, so the page scales with the reader's browser font
+       size instead of pinning text at a fixed pixel value. */
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    /* Registered tokens are animatable, so switching theme cross-fades
+       the whole document instead of snapping. */
+    transition: background-color 220ms ease, color 220ms ease;
+  }
+
+  @layer base {
+    * { box-sizing: border-box; }
+
+    /* Every colour-bearing surface eases with the theme swap. */
+    .verdict, .finding, .recs, .tile, .table-wrap, .fix, .evidence, code,
+    .scoreboard, .sec-head, footer, .meta-row {
+      transition: background-color 220ms ease, border-color 220ms ease,
+                  color 220ms ease;
+    }
+
+    /* Motion is a preference, not a given. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+      ::view-transition-group(*),
+      ::view-transition-old(*),
+      ::view-transition-new(*) { animation: none !important; }
+    }
+
+    /* Keyboard users must be able to see where they are. The scrollable
+       regions below are focusable, so they need this too. */
+    :where(a, [tabindex]):focus-visible {
+      outline: 2px solid var(--sev-medium);
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
+
+    code {
+      font-family: var(--mono); font-size: 0.87em;
+      background: var(--surface-alt); padding: 1px 5px; border-radius: 2px;
+      color: var(--ink);
+    }
+  }
+
+  @layer layout {
+    /* A cross-document view transition when the report is opened as a
+       standalone page. Inside the artifact frame there is no navigation
+       to animate, so this is inert there rather than wrong. */
+    @view-transition { navigation: auto; }
+
+    .page {
+      max-width: 58.75rem;
+      margin-inline: auto;
+      padding: clamp(1.75rem, 5vw, 4rem) clamp(1.125rem, 4vw, 2.5rem) 6rem;
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--step) * 13);
+      view-transition-name: report;
+    }
+
+    section {
+      display: flex; flex-direction: column; gap: calc(var(--step) * 5);
+      /* Findings and tables are their own containers, so components can
+         respond to the column they sit in rather than the viewport. */
+      container-type: inline-size;
+      container-name: section;
+    }
+
+    .masthead { display: flex; flex-direction: column; gap: calc(var(--step) * 4.5); }
+
+    .sec-head {
+      display: flex; align-items: baseline; gap: calc(var(--step) * 3.5);
+      border-block-end: 1px solid var(--rule-strong);
+      padding-block-end: calc(var(--step) * 2.5);
+    }
+    /* A flex child defaults to min-width:auto and refuses to shrink below
+       its content, which is what pushes long headings past the viewport. */
+    .sec-head h2 { flex: 1 1 auto; min-width: 0; }
+  }
+
+  @layer components {
+    .kicker {
+      font-family: var(--mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+
+    h1 {
+      font-family: var(--display);
+      font-weight: 600;
+      font-size: clamp(2.125rem, 6vw, 3.375rem);
+      line-height: 1.05;
+      letter-spacing: -0.015em;
+      margin: 0;
+      text-wrap: balance;
+    }
+    h1 .sub {
+      display: block; color: var(--ink-soft); font-size: 0.52em;
+      font-style: italic; margin-block-start: calc(var(--step) * 2.5);
+      letter-spacing: 0;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: calc(var(--step) * 2) calc(var(--step) * 7);
+      padding-block-start: calc(var(--step) * 4);
+      border-block-start: 2px solid var(--ink);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--ink-soft);
+    }
+    .meta-row b { color: var(--ink); font-weight: 600; }
+
+    .verdict {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-inline-start: 4px solid var(--sev-blocker);
+      border-radius: 3px;
+      padding: calc(var(--step) * 6) calc(var(--step) * 6.5);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--step) * 3.5);
+    }
+    .verdict p { margin: 0; max-width: 68ch; }
+    .verdict .lead { font-family: var(--display); font-size: 1.25rem; line-height: 1.45; }
+
+    /* ── Scoreboard ──────────────────────────────────────────────────
+       Each tile is a subgrid spanning three parent rows, so the label,
+       the before value and the after value line up across every tile —
+       the alignment a nested grid cannot give you, and which otherwise
+       drifts as soon as one label wraps to two lines. The 1px gaps show
+       the container colour as hairlines; the gaps *inside* a tile's own
+       span are painted over by the tile, so only the boundaries show. */
+    .scoreboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11.875rem, 1fr));
+      grid-auto-rows: auto;
+      gap: 1px;
+      background: var(--rule);
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .tile {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: span 3;
+      align-content: start;
+      background: var(--surface);
+      padding: calc(var(--step) * 4) calc(var(--step) * 4.5);
+    }
+    .tile .label {
+      font-family: var(--mono); font-size: 0.625rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink-faint);
+      padding-block-end: calc(var(--step) * 1.5);
+    }
+    .tile .before {
+      font-family: var(--mono); font-size: 0.78rem; color: var(--sev-blocker);
+      text-decoration: line-through; text-decoration-thickness: 1px; opacity: 0.85;
+      padding-block-end: calc(var(--step) * 1.5);
+    }
+    .tile .after {
+      font-family: var(--mono); font-size: 1.0625rem; font-weight: 600;
+      color: var(--sev-good); font-variant-numeric: tabular-nums;
+      align-self: end;
+    }
+    /* Browsers without subgrid still get a sane stacked tile. */
+    @supports not (grid-template-rows: subgrid) {
+      .tile { display: flex; flex-direction: column; gap: calc(var(--step) * 1.5); }
+    }
+
+    .sec-num {
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 600;
+      color: var(--accent); letter-spacing: 0.06em;
+      padding-block-start: var(--step);
+    }
+    h2 {
+      font-family: var(--display); font-weight: 600;
+      font-size: clamp(1.375rem, 3.4vw, 1.875rem);
+      letter-spacing: -0.01em; margin: 0; line-height: 1.2; text-wrap: balance;
+    }
+    .sec-tag {
+      font-family: var(--mono); font-size: 0.625rem; letter-spacing: 0.1em;
+      text-transform: uppercase; padding: 0.1875rem 0.5rem; border-radius: 2px;
+      white-space: nowrap;
+    }
+    .t-blocker  { color: var(--sev-blocker);  background: var(--blocker-wash); }
+    .t-critical { color: var(--sev-critical); background: oklch(55.5% 0.1455 49.0 / 0.10); }
+    .t-high     { color: var(--sev-high);     background: oklch(50.8% 0.0982 89.2 / 0.12); }
+    .t-medium   { color: var(--sev-medium);   background: oklch(49.4% 0.0932 258.1 / 0.11); }
+
+    .finding {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-inline-start: 3px solid var(--stripe);
+      border-radius: 3px;
+      padding: calc(var(--step) * 4.5) calc(var(--step) * 5);
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--step) * 2.5);
+      /* Independent block: limits repaint scope, and keeps the card whole
+         across a page break when printed. */
+      contain: content;
+    }
+    .finding.blocker  { --stripe: var(--sev-blocker); }
+    .finding.critical { --stripe: var(--sev-critical); }
+    .finding.high     { --stripe: var(--sev-high); }
+
+    .finding h3 {
+      margin: 0; font-size: 1.03rem; font-weight: 650; line-height: 1.35;
+      display: flex; gap: calc(var(--step) * 2.5); align-items: baseline;
+      flex-wrap: wrap; min-width: 0;
+    }
+    .fid {
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 600;
+      color: var(--stripe); font-variant-numeric: tabular-nums;
+    }
+    .finding p { margin: 0; max-width: 72ch; color: var(--ink-soft); }
+    .finding p strong, .verdict p strong { color: var(--ink); font-weight: 650; }
+
+    .fix {
+      margin-block-start: 2px; padding: calc(var(--step) * 2.5) calc(var(--step) * 3);
+      border-radius: 2px;
+      background: var(--good-wash); color: var(--ink-soft);
+      font-size: 0.9rem; max-width: 72ch;
+    }
+    .fix b {
+      color: var(--sev-good); font-family: var(--mono); font-size: 0.6875rem;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin-inline-end: calc(var(--step) * 2);
+    }
+
+    .evidence {
+      font-family: var(--mono); font-size: 0.78rem; line-height: 1.55;
+      background: var(--surface-alt); border-radius: 2px;
+      padding: calc(var(--step) * 2.5) calc(var(--step) * 3);
+      color: var(--ink); overflow-x: auto; white-space: pre;
+      min-width: 0;
+    }
+
+    .table-wrap {
+      overflow-x: auto; border: 1px solid var(--rule);
+      border-radius: 3px; background: var(--surface);
+      min-width: 0;
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td {
+      text-align: start; padding: calc(var(--step) * 2.75) calc(var(--step) * 3.5);
+      border-block-end: 1px solid var(--rule); vertical-align: top;
+    }
+    thead th {
+      font-family: var(--mono); font-size: 0.625rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+      background: var(--surface-alt); white-space: nowrap;
+    }
+    tbody tr:last-child td { border-block-end: none; }
+    td:first-child {
+      font-family: var(--mono); font-size: 0.75rem; color: var(--sev-medium);
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    td.what { color: var(--ink-soft); }
+
+    ul, ol {
+      margin: 0; display: flex; flex-direction: column;
+      max-width: 74ch; color: var(--ink-soft);
+    }
+    ul { padding-inline-start: calc(var(--step) * 5); gap: calc(var(--step) * 2); }
+    ol { padding-inline-start: calc(var(--step) * 5.5); gap: calc(var(--step) * 3); }
+    li strong { color: var(--ink); font-weight: 650; }
+    li::marker { color: var(--ink-faint); }
+
+
+    /* Available to a screen reader, absent from the visual design. */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0;
+      margin: -1px; overflow: hidden; clip-path: inset(50%);
+      white-space: nowrap; border: 0;
+    }
+    .prose { margin: 0; max-width: 72ch; color: var(--ink-soft); }
+    .prose strong { color: var(--ink); font-weight: 650; }
+
+    .recs {
+      background: var(--surface); border: 1px solid var(--rule);
+      border-radius: 3px; padding: calc(var(--step) * 5.5) calc(var(--step) * 6);
+    }
+
+    footer {
+      border-block-start: 1px solid var(--rule);
+      padding-block-start: calc(var(--step) * 4.5);
+      font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint);
+      display: flex; flex-wrap: wrap; gap: calc(var(--step) * 1.5) calc(var(--step) * 6);
+    }
+  }
+
+  /* ── Relational state ─────────────────────────────────────────────
+     :has() lets the structure describe itself. A finding that carries a
+     fix is a resolved finding, and says so, without a second class name
+     on the markup or a line of JavaScript to add one. */
+  @layer state {
+    /* A finding that carries its own fix is a resolved finding, and says
+       so — no second class name in the markup, no JavaScript to add one.
+       Only the positive is asserted: several findings are resolved by a
+       fix block shared with their siblings, so the *absence* of a badge
+       says nothing, and styling it as "open" would be a lie. */
+    .finding:has(> .fix) h3::after {
+      content: "resolved";
+      font-family: var(--mono); font-size: 0.5625rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--sev-good); background: var(--good-wash);
+      padding: 0.125rem 0.375rem; border-radius: 2px;
+      white-space: nowrap;
+    }
+
+    /* A finding backed by reproduction output gets a tighter, quieter
+       lead-in to it. */
+    .finding:has(.evidence) p:has(+ .evidence) { color: var(--ink); }
+
+    /* A section containing a blocker earns a heavier rule under its head. */
+    section:has(.t-blocker) .sec-head { border-block-end-color: var(--sev-blocker); }
+
+    /* Evidence blocks sit tighter to the paragraph that introduces them. */
+    p:has(+ .evidence) { padding-block-end: calc(var(--step) * 0.5); }
+  }
+
+  @layer responsive {
+    /* Container queries, not viewport queries: a finding reflows when its
+       own column gets narrow, which stays correct if this component is
+       ever placed in a sidebar or a two-column print layout. */
+    @container section (max-width: 30rem) {
+      .finding { padding: calc(var(--step) * 3.75) calc(var(--step) * 4); }
+      .finding h3 { font-size: 0.97rem; }
+      .verdict { padding: calc(var(--step) * 4) calc(var(--step) * 4); }
+      .verdict .lead { font-size: 1.1rem; }
+    }
+    @container section (max-width: 22rem) {
+      .finding h3::after { display: none; }
+    }
+
+    @media (max-width: 35rem) {
+      .sec-head { flex-wrap: wrap; }
+      .page { gap: calc(var(--step) * 9); }
+    }
+
+    /* ── Print ──────────────────────────────────────────────────────
+       An audit gets printed and PDF'd. Force the light palette (both the
+       toggle and the media-query variants have to be overridden), drop
+       the page chrome, and keep findings and tables whole across pages. */
+    @media print {
+      :root,
+      :root[data-theme="dark"],
+      :root:not([data-theme="light"]) {
+        --ground:       oklch(100% 0 0);
+        --surface:      oklch(100% 0 0);
+        --surface-alt:  oklch(96.7% 0.0026 106.4);
+        --ink:          oklch(0% 0 0);
+        --ink-soft:     oklch(28.4% 0.0036 106.6);
+        --ink-faint:    oklch(44.8% 0.0096 106.8);
+        --rule:         oklch(82.9% 0.0099 93.6);
+        --rule-strong:  oklch(67.9% 0.0118 95.2);
+        --accent:       oklch(44.8% 0.0883 85.0);
+        --sev-blocker:  oklch(42.0% 0.1474 28.5);
+        --sev-critical: oklch(45.9% 0.1185 49.3);
+        --sev-high:     oklch(41.6% 0.0792 91.3);
+        --sev-medium:   oklch(40.7% 0.0773 257.8);
+        --sev-good:     oklch(37.5% 0.0773 148.7);
+        --blocker-wash: transparent;
+        --good-wash:    transparent;
+        --shadow: none;
+      }
+      body { background: #FFF; color: #000; font-size: 10.5pt; }
+      .page { max-width: none; padding: 0; gap: calc(var(--step) * 6); }
+      .verdict, .finding, .recs, .table-wrap, .tile, .fix, .evidence {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+      .fix { border: 1px solid var(--rule); }
+      section { break-inside: auto; }
+      h1, h2, h3, .sec-head { break-after: avoid; }
+      .table-wrap, .evidence { overflow: visible; }
+      footer { break-before: avoid; }
+    }
+  }
+</style>
+</head>
+<body>
+<!-- lang is set here because the wrapping <html> element is not ours to
+     annotate; this covers all of the page's actual content. -->
+<main class="page" lang="en">
+
+  <header class="masthead">
+    <div class="kicker">Production readiness audit</div>
+    <h1>NotSucky&nbsp;Notes
+      <span class="sub">A desktop app that could not start, and what it took to fix that</span>
+    </h1>
+    <div class="meta-row">
+      <span><b>Audited</b> v1.0.0</span>
+      <span><b>Delivered</b> v1.3.0</span>
+      <span><b>Date</b> 2026-08-10</span>
+      <span><b>Stack</b> Python 3.10+ · PySide6</span>
+      <span><b>Scope</b> app · persistence · packaging · tests · docs</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="verdict">
+      <p class="lead">The audited version could not start. <code>card_widget.py</code> raised
+        <code>ImportError</code> at import time, and the dashboard imports it on every grid
+        refresh — including the one in its own constructor.</p>
+      <p>Behind that blocker sat a second one (<code>NameError</code> on <code>QSizePolicy</code>),
+        and behind those, a storage layer pointed at a directory the user's notes were not in.
+        The test suite caught none of it: <strong>8 tests failed and 7 errored</strong> before this
+        audit, there was no GUI coverage at all, and the tests that did run were reading and
+        writing the <em>real</em> notes directory.</p>
+    </div>
+
+    <div class="scoreboard">
+      <div class="tile"><span class="label">Application starts</span><span class="before">ImportError</span><span class="after">Yes</span></div>
+      <div class="tile"><span class="label">Tests</span><span class="before">8 failed · 7 errored</span><span class="after">443 passed</span></div>
+      <div class="tile"><span class="label">Coverage</span><span class="before">not measurable</span><span class="after">92%, 90% gate</span></div>
+      <div class="tile"><span class="label">Lint · types · audit</span><span class="before">104 lint errors</span><span class="after">all clean</span></div>
+      <div class="tile"><span class="label">Wheel builds</span><span class="before">invalid backend</span><span class="after">builds + installs</span></div>
+      <div class="tile"><span class="label">Notes visible to app</span><span class="before">wrong directory</span><span class="after">found + migrated</span></div>
+      <div class="tile"><span class="label">Grid, 2,000 notes</span><span class="before">2,046 ms to paint</span><span class="after">9 ms</span></div>
+      <div class="tile"><span class="label">Zip bomb restore</span><span class="before">200 MB written</span><span class="after">refused</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>The application could not run</h2>
+      <span class="sec-tag t-blocker">Blocker</span>
+    </div>
+
+    <div class="finding blocker">
+      <h3><span class="fid">1.1</span> <code>QMouseEvent</code> imported from the wrong Qt module</h3>
+      <p><code>card_widget.py:8</code> — <code>from PySide6.QtCore import Qt, QMouseEvent, Signal</code>.
+        <code>QMouseEvent</code> lives in <code>QtGui</code>. This raised <code>ImportError</code> the
+        moment anything imported the module, which <code>DashboardWindow._refresh_grid</code> does
+        unconditionally. <strong>The application was 100% non-functional.</strong></p>
+    </div>
+
+    <div class="finding blocker">
+      <h3><span class="fid">1.2</span> <code>QSizePolicy</code> used but never imported</h3>
+      <p><code>card_widget.py:40</code> called <code>setSizePolicy(QSizePolicy.Expanding, …)</code>
+        with no import — a second, independent hard failure sitting immediately behind 1.1.</p>
+    </div>
+
+    <div class="finding blocker">
+      <h3><span class="fid">1.3</span> Invalid PEP 517 build backend</h3>
+      <p><code>build-backend = "setuptools.backends._legacy:_Backend"</code>. No such module.
+        <code>pip install .</code> and any wheel build failed outright.</p>
+    </div>
+
+    <div class="finding blocker">
+      <h3><span class="fid">1.4</span> Four subpackages had no <code>__init__.py</code></h3>
+      <p><code>models/</code>, <code>services/</code>, <code>utils/</code> and <code>views/</code>
+        resolved in a source checkout only through implicit namespace packages.
+        <code>packages.find</code> had no <code>include</code> filter, so it would have swept in
+        <code>tests</code> and <code>notes</code> while an install missed the real code.</p>
+    </div>
+
+    <div class="fix"><b>Fixed</b>Correct imports, <code>setuptools.build_meta</code>,
+      <code>__init__.py</code> in every subpackage, <code>include = ["notsucky*"]</code>. Verified by
+      building a wheel and importing all subpackages from a clean virtualenv.</div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>Data loss and data location</h2>
+      <span class="sec-tag t-critical">Critical</span>
+    </div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.1</span> Notes were stored where the user could not see them</h3>
+      <p><code>PROJECT_ROOT = Path(__file__).resolve().parent.parent</code> resolves to the
+        <strong>package</strong> directory, not the project root — so <code>NOTES_DIR</code> became
+        <code>notsucky/notes</code> while the real notes sat in <code>./notes</code>. The dashboard
+        would have come up empty. Installed, it would have written notes into
+        <code>site-packages</code>, where the next upgrade deletes them.</p>
+    </div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.2</span> A third, CWD-dependent location</h3>
+      <p><code>main.py:12</code> ran <code>os.makedirs("notes")</code> at import time — relative to
+        the working directory, and disagreeing with 2.1.</p>
+    </div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.3</span> The path could not be overridden consistently</h3>
+      <p><code>file_manager.py</code> bound <code>NOTES_DIR</code> at import while
+        <code>note.py</code> resolved it lazily <em>on purpose</em> ("to support testing
+        monkeypatches"). The two disagreed under any override: <code>save_note</code> wrote to the
+        patched directory while <code>load_by_id</code>, <code>load_all</code> and
+        <code>delete_note</code> used the original. This is why the baseline tests both failed
+        <em>and</em> touched real user data.</p>
+    </div>
+
+    <div class="fix"><b>Fixed</b>One resolver in <code>utils/paths.py</code> — explicit override →
+      <code>NOTSUCKY_NOTES_DIR</code> → per-platform user data directory — called as a function
+      everywhere. A one-time <em>copy</em> migration imports notes from either legacy location;
+      originals stay put as a backup and a marker file stops it re-running. Verified end to end:
+      both real notes were imported and rendered.</div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.4</span> Writes were not atomic</h3>
+      <p><code>open(path, "w")</code> truncates before writing. A crash, power loss or full disk
+        mid-write destroyed the note — and the loader then discarded the wreckage as "corrupt".</p>
+      <div class="fix"><b>Fixed</b>Temp file in the same directory → <code>fsync</code> →
+        <code>os.replace</code>. A failed write now leaves the previous version completely intact,
+        covered by a test that injects an <code>OSError</code> into <code>os.replace</code>.</div>
+    </div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.5</span> Save failures were invisible</h3>
+      <p>Errors were logged and swallowed, so the user kept typing into a note that was no longer
+        reaching the disk. <code>StorageError</code> now propagates to the view; the note shows
+        <code>⚠ not saved</code> and the dashboard status bar shows why.</p>
+    </div>
+
+    <div class="finding critical">
+      <h3><span class="fid">2.6</span> No path-traversal guard on note ids</h3>
+      <p>Ids became file names with no validation — a hand-edited file with
+        <code>"id": "../../.bashrc"</code> would be written outside the notes directory. Ids are now
+        validated against <code>[A-Za-z0-9_-]{1,64}</code>, repaired on load, and rejected in
+        <code>path_for</code>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>Functional defects</h2>
+      <span class="sec-tag t-high">High</span>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.1</span> Runaway window drag — <em>visible in your saved data</em></h3>
+      <p>Each mouse-move re-applied a delta measured from the <em>original</em> press without
+        re-anchoring, so the offset compounded. The proof was sitting in the repository:</p>
+      <div class="evidence">notes/505e8a20.json
+{ "title": "78Skies", "x": -45088, "y": 33945 }</div>
+      <p>And because saved positions were restored with no bounds check (3.2), that note opened
+        roughly 45,000 px off-screen and could never be reached again.</p>
+      <div class="fix"><b>Fixed</b>The drag anchors on the cursor-to-origin offset, which is
+        constant and cannot compound; position is clamped to the real screen layout on restore and
+        on release. That note now opens on screen — verified.</div>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.3</span> Notes could not be dragged at all</h3>
+      <p>The drag was guarded by <code>not self.childAt(event.pos())</code>. That is inverted: a
+        press only <em>reaches</em> the window handler when a non-interactive child ignored it —
+        which is exactly when <code>childAt</code> is non-<code>None</code>. The guard rejected
+        precisely the presses that should drag.</p>
+      <div class="fix"><b>Fixed</b>An explicit drag-handle test that walks up from the child under
+        the cursor and refuses only genuinely interactive controls. The title field stretches across
+        the whole bar and left almost nothing to grab, so a dedicated <code>⠿</code> handle was
+        added.</div>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.4</span> Notes could not be resized</h3>
+      <p>The window is <code>FramelessWindowHint</code>, which removes the native resize border, and
+        nothing replaced it — despite the README promising "resize freely". The model had no
+        width/height fields either, so any size would have been lost on close. Now: a
+        <code>QSizeGrip</code> plus persisted <code>width</code>/<code>height</code>.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.5</span> Auto-save was not debounced</h3>
+      <p><code>QTimer.singleShot(1000, …)</code> fired on <strong>every</strong>
+        <code>textChanged</code>. Typing 200 characters scheduled 200 timers and produced 200
+        full-file writes a second later; the title had no debounce at all — one disk write per
+        keystroke. Replaced with one restartable timer per window, covered by a test asserting zero
+        writes mid-burst.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.6</span> Cards rendered with no background</h3>
+      <p>A <code>QWidget</code> <strong>subclass</strong> ignores <code>background-color</code> in
+        its own stylesheet unless <code>WA_StyledBackground</code> is set. The v1.0 refactor turned
+        the card from a plain <code>QWidget</code> into a subclass and inherited this: every card
+        painted transparent, leaving pale text on the dark dashboard.</p>
+      <p><strong>No logic test could see this.</strong> It was found by running the app and looking
+        at it — and is now pinned by regression tests that assert real pixel colors.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.7 – 3.10</span> Four state bugs around minimize and delete</h3>
+      <ul>
+        <li><strong>The dock was never restored at startup</strong> — <code>_minimized_ids</code> was
+          not populated from the persisted flags, stranding minimized notes.</li>
+        <li><strong>Restore never cleared the flag</strong>, so a restored note stayed
+          <code>minimized: true</code> on disk forever.</li>
+        <li><strong>Hidden windows leaked and duplicated</strong> — the open-note check required
+          <code>isVisible()</code>, so a minimized note got a second widget that orphaned the
+          first.</li>
+        <li><strong>Deleting an open note resurrected it</strong> — cleanup also required
+          <code>isVisible()</code>, so a hidden widget survived deletion and the next auto-save
+          wrote the note straight back to disk.</li>
+      </ul>
+      <div class="fix"><b>Fixed</b>Dock rebuilt from disk and pruned of missing notes; restore clears
+        the flag in memory, on disk and in the dock; a <code>_live_widget</code> helper drops dead
+        references; deletion tears the window down with signals blocked <em>before</em> removing the
+        file. Each has a named regression test.</div>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.11</span> The dashboard never closed its note windows</h3>
+      <p>There was no <code>closeEvent</code>. Note windows are top-level <code>Qt.Tool</code>
+        windows, so closing the dashboard left them alive — keeping the process running and losing
+        every unflushed edit.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.12</span> Advertised drag-to-reorder did not exist</h3>
+      <p>The README and the <code>pyproject.toml</code> description both promise a
+        "drag-to-reorder grid". <code>CardWidget</code> called <code>setAcceptDrops(True)</code> and
+        implemented no drag or drop handlers at all.</p>
+      <div class="fix"><b>Built</b>Cards are now drag sources and drop targets with a dashed drop
+        indicator; an <code>order</code> field persists the arrangement, sorted with recency as the
+        tie-break. Reordering is refused while a filter is active, since positions derived from a
+        filtered subset would scramble the full list.</div>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">3.13</span> Non-deterministic note placement</h3>
+      <p>Placement used <code>hash(note.id)</code>. Python salts string hashing per process, so an
+        unpositioned note landed somewhere different on every launch, with nothing keeping it
+        on screen.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>Correctness and performance</h2>
+      <span class="sec-tag t-medium">Medium</span>
+    </div>
+    <div class="table-wrap" tabindex="0" role="region"
+         aria-label="Correctness and performance findings, scrollable">
+      <table>
+          <caption class="sr-only">Correctness and performance findings</caption>
+        <thead><tr><th scope="col">ID</th><th scope="col">Finding</th><th scope="col">Fix</th></tr></thead>
+        <tbody>
+          <tr><td>4.1</td><td class="what"><code>delete_note</code> returned <code>True</code> unconditionally, contradicting its own docstring.</td><td class="what">Reports the real outcome.</td></tr>
+          <tr><td>4.2</td><td class="what">Search re-read and re-parsed <strong>every note file on every keystroke</strong>.</td><td class="what">In-memory cache, pure filter, 150 ms debounce.</td></tr>
+          <tr><td>4.3</td><td class="what">The dock called <code>load_by_id</code> once per entry, per rebuild.</td><td class="what">Served from the loaded list.</td></tr>
+          <tr><td>4.4</td><td class="what">Naive local timestamps compared as strings — ordering breaks across a DST change.</td><td class="what">Timezone-aware UTC; v1 values still parse.</td></tr>
+          <tr><td>4.5</td><td class="what">No length limits; a large paste became an unbounded file.</td><td class="what">200 / 1,000,000 chars, enforced in three layers.</td></tr>
+          <tr><td>4.6</td><td class="what">One malformed field took down the entire grid load.</td><td class="what">Every field coerced or defaulted individually.</td></tr>
+          <tr><td>4.7</td><td class="what"><code>FileManager.search</code> was dead code; the dashboard reimplemented it inline.</td><td class="what">One shared <code>filter_notes</code>.</td></tr>
+          <tr><td>4.8</td><td class="what">Card declared signals, then used constructor callbacks instead.</td><td class="what">Signals only.</td></tr>
+          <tr><td>4.9</td><td class="what">Fixed 4-column grid despite "responsive resizing" in the comments.</td><td class="what">1–6 columns from viewport width.</td></tr>
+          <tr><td>4.10</td><td class="what">Colour swatches captured a stale closure; after a change the marker pointed at the old colour and one swatch stayed inert.</td><td class="what">A real <code>ColorDot</code> that re-marks on every change.</td></tr>
+          <tr><td>4.11</td><td class="what">CSS typo <code>border-top-right-right-radius</code> — silently ignored.</td><td class="what">Corrected.</td></tr>
+          <tr><td>4.12</td><td class="what">Text contrast ≈2.3:1 (<code>#F57F17</code> on <code>#FFF9C4</code>), below WCAG AA.</td><td class="what">Foregrounds darkened to ≥7:1.</td></tr>
+          <tr><td>4.13</td><td class="what">No keyboard access, accessible names or tooltips.</td><td class="what">Seven shortcuts; names and tooltips throughout.</td></tr>
+          <tr><td>4.14</td><td class="what">Logging configured at import; no log file.</td><td class="what">Configured in <code>main()</code>; rotating file log.</td></tr>
+          <tr><td>4.15</td><td class="what"><code>os.makedirs</code> ran as an import side effect.</td><td class="what">Importing the package now does nothing.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2>The test suite was reporting confidence it had not earned</h2>
+      <span class="sec-tag t-critical">Critical</span>
+    </div>
+    <ul>
+      <li><strong>8 failures and 7 errors at baseline</strong> — none of them the tests correctly
+        reporting an app bug; they were defects in the tests themselves.</li>
+      <li><code>test_search_by_title</code> asserted <code>results[0].title == "Note Python Notes"</code>
+        — a value the code could never produce.</li>
+      <li><code>test_note_service.py</code> monkeypatched <code>note_module.NOTES_DIR</code>, an
+        attribute that does not exist on that module, erroring out all 7 tests in the file.</li>
+      <li><code>conftest.py</code> created <code>tests/__init__.py</code> as a side effect of
+        collection.</li>
+      <li><strong>Tests read and wrote the real notes directory.</strong> Running <code>pytest</code>
+        put the user's data at risk.</li>
+      <li><strong>Zero GUI coverage</strong> — which is exactly why two import-time blockers
+        shipped.</li>
+    </ul>
+    <p class="prose"><strong>Delivered:</strong> 443 tests at 92% coverage, isolated by an autouse
+      fixture that repoints storage at a per-test temporary directory. GUI tests via
+      <code>pytest-qt</code> cover the grid, filtering, the dock, the full
+      open/close/minimize/restore/delete lifecycle, drag-to-reorder, debounced saving,
+      storage-failure reporting, off-screen clamping, and the pixel-level background regression.
+      Named regression tests exist for 3.1, 3.3, 3.6, 3.7, 3.8, 3.9 and 3.10.</p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2>Removed code</h2>
+      <span class="sec-tag t-medium">Cleanup</span>
+    </div>
+    <p class="prose">A 22 KB <code>main.py</code> in the repository root was a copy of the original
+      single-file "Sticky Notes v6", fully superseded by the package and still being shipped. It had
+      its own fatal bugs — <code>QGridLayout.rowWidget()</code> and <code>columnWidget()</code> do
+      not exist in Qt, <code>event.mimeData.data(…)</code> is missing a call, <code>drag.exec_()</code>
+      is the removed Qt5 spelling, and <code>QDrag</code> was never imported — so its
+      drag-to-reorder raised on first use. It also accounted for 68 of the 104 lint errors.</p>
+    <p class="prose">Moved to <code>archive/</code> rather than deleted, because there is no version
+      control to recover it from. <code>_dump.py</code> and <code>_dump.py.tmp</code> went with it.
+      The directory is excluded from linting and from the wheel.</p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <h2>Recommendations — all implemented</h2>
+      <span class="sec-tag t-medium">Done</span>
+    </div>
+    <div class="recs">
+      <ol>
+        <li><strong>Version control.</strong> Committed and pushed to
+          <code>sirh210/NotSucky-Notes</code>. The superseded monolith went into the first commit so
+          git holds a copy, then out in the commit after — recoverable from history, absent from the
+          tree.</li>
+        <li><strong>CI.</strong> Lint, types, and a dependency audit, then the suite on Linux and
+          Windows across Python 3.10–3.13, then a wheel build that installs into a clean virtualenv
+          and imports every subpackage — exactly the failure of 1.4. Coverage below 90% fails the
+          build.</li>
+        <li><strong>Undo for deletion.</strong> Notes move to <code>.trash</code> and
+          <code>Ctrl+Z</code> restores the last one. The 30-day sweep this originally shipped with
+          was <em>removed</em> in 1.3.0 — see section 09. The deletion time lives in the file name
+          rather than the mtime, which sync tools do not preserve.</li>
+        <li><strong>Backups.</strong> Dated zip snapshots beside the notes, at most one a day, ten
+          kept, built under a <code>.part</code> name so a partial file is never mistaken for a
+          usable one.</li>
+        <li><strong>Application icon.</strong> Drawn at runtime at seven sizes — no binary asset, no
+          scaling blur.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">08</span>
+      <h2>Follow-up review</h2>
+      <span class="sec-tag t-critical">Second pass</span>
+    </div>
+
+    <p class="prose">A later pass over security, performance, observability, and documentation.
+      Everything below was <strong>measured before it was changed</strong>.</p>
+
+    <div class="finding critical">
+      <h3><span class="fid">8.1</span> Three security holes, closed</h3>
+      <div class="table-wrap" tabindex="0" role="region"
+           aria-label="Security findings before and after, scrollable">
+        <table>
+          <caption class="sr-only">Security findings, before and after</caption>
+          <thead><tr><th scope="col">Finding</th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
+          <tbody>
+            <tr><td class="what">Note files were read whole into memory before the content cap applied.</td><td class="what">60 MB file: 114 ms, fully allocated</td><td class="what">skipped over 8 MB: <strong>2 ms</strong></td></tr>
+            <tr><td class="what">Zip bomb — <code>restore_backup</code> extracted whatever it was given.</td><td class="what">199 KB archive → <strong>200 MB written</strong></td><td class="what"><strong>0 bytes</strong>, refused</td></tr>
+            <tr><td class="what">Data directory took the default mode, so any local account could list note titles.</td><td class="what"><code>0755</code></td><td class="what"><code>0700</code> on POSIX</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Already sound: path traversal, deserialization, and logging — no note title or body reaches
+        a log record, now enforced by tests that plant a secret and search the output.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">8.2</span> The grid was the bottleneck, not the disk</h3>
+      <p>Measured at 10/100/500/2,000 notes before touching anything. I/O was never the problem.</p>
+      <div class="table-wrap" tabindex="0" role="region"
+           aria-label="Performance measurements at 2,000 notes, scrollable">
+        <table>
+          <caption class="sr-only">Performance measurements at 2,000 notes</caption>
+          <thead><tr><th scope="col">At 2,000 notes</th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
+          <tbody>
+            <tr><td class="what">Grid build, blocking first paint</td><td class="what">2,046 ms</td><td class="what"><strong>9 ms</strong></td></tr>
+            <tr><td class="what">Grid build, all cards</td><td class="what">2,046 ms</td><td class="what">365 ms</td></tr>
+            <tr><td class="what">Dashboard startup</td><td class="what">1,603 ms</td><td class="what">93 ms</td></tr>
+            <tr><td class="what"><code>load_all</code></td><td class="what">83 ms</td><td class="what">89 ms — never the bottleneck</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Two causes: Qt re-parses CSS for every widget carrying its own stylesheet, and at five per
+        card that was ~80% of construction (<strong>350 µs → 142 µs</strong> once moved to one shared
+        sheet); and the grid built every card before painting, where it now builds 48 and streams the
+        rest.</p>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">8.3</span> A rendering bug the unit tests could not see</h3>
+      <p>Found while checking the performance work visually: a <strong>selector-less</strong>
+        stylesheet — <code>setStyleSheet("background: transparent")</code> — applies to the widget
+        <em>and every descendant</em>. The grid container was doing exactly that, blanking the
+        background of every card inside it.</p>
+      <p>The existing pixel test passed throughout, because it used a <em>standalone</em> card. Every
+        chrome rule is now scoped by object name, and the pixel tests assert a card
+        <strong>inside the dashboard</strong> — the gap that let this through twice.</p>
+    </div>
+
+    <div class="finding">
+      <h3><span class="fid">8.4</span> Types, observability, and tested documentation</h3>
+      <p><code>mypy</code> now runs in CI, and its findings were real: <code>QApplication.instance()</code>
+        can be a <code>QCoreApplication</code> with no stylesheet, <code>QLayout.takeAt</code> can
+        return <code>None</code>, and <code>is_valid_id</code> is now a <code>TypeGuard</code> so the
+        check and the type cannot drift apart.</p>
+      <p>Qt warnings route into logging, uncaught exceptions are logged and reported, startup steps
+        are timed, and <code>--diagnostics</code> prints a support report carrying no note content.
+        <code>tests/test_docs.py</code> fails when the docs describe a module, shortcut, flag, or
+        path that does not exist — it caught three stale claims in the README on its first run.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">09</span>
+      <h2>Two guarantees, and the three things that broke them</h2>
+      <span class="sec-tag t-blocker">1.3.0</span>
+    </div>
+
+    <p class="prose">Asked to make certain the application never deletes a note and never asks
+      anyone to sign in, I checked rather than answered. <strong>The sign-in half was already
+      true.</strong> The no-deletion half was not — and two of the three culprits were mine,
+      introduced by earlier work in this very audit.</p>
+
+    <div class="finding blocker">
+      <h3><span class="fid">9.1</span> A sweep deleted trashed notes on every launch</h3>
+      <p>The trash added in 1.1.0 came with a 30-day retention sweep that ran at startup. That is
+        unattended, unprompted deletion of a user's own data — the application deciding on its own
+        that something had been in the bin long enough.</p>
+      <div class="fix"><b>Removed</b>Retention is unlimited. <code>TRASH_RETENTION_DAYS</code> is
+        <code>None</code>, <code>purge_trash()</code> with no argument removes nothing, and startup
+        maintenance no longer calls it at all — it is now additive only.</div>
+    </div>
+
+    <div class="finding blocker">
+      <h3><span class="fid">9.2</span> A length limit quietly amputated long notes</h3>
+      <p><code>Note.__post_init__</code> capped content at 1,000,000 characters <em>while reading a
+        file</em>. Nothing looked wrong — until the next save wrote the shortened value back. And
+        the next save could be triggered by nothing more than moving the window.</p>
+      <p>The same pattern hid in two more places: the editor's <code>setPlainText</code> and
+        <code>QLineEdit.setMaxLength</code>, which both truncated an over-limit note the instant its
+        window opened.</p>
+      <div class="fix"><b>Fixed</b>Nothing truncates on load or save. Limits now bound how far
+        <em>new</em> input can grow a note: each note carries a ceiling of
+        <code>max(limit, current length)</code>, so typing is still bounded while existing text is
+        untouchable. Memory is protected by refusing to read an oversized <em>file</em> — which
+        leaves it intact on disk — rather than by discarding text already in memory.</div>
+    </div>
+
+    <div class="finding">
+      <h3><span class="fid">9.3</span> Proving it, rather than asserting it</h3>
+      <p>Simulated 365 launches against a store holding a 1.5-million-character note, a note trashed
+        ten years ago, a corrupt file, and a stray non-note file:</p>
+      <div class="evidence">seeded 8 files
+after 365 launches: 8 files
+  files lost   : NONE
+  files shrunk : NONE
+  long note    : 1,500,000 chars (seeded 1,500,000)
+  after a save : 1,500,000 chars
+  10y-old trash: restored=True</div>
+      <p>Unreadable and oversized files are skipped and left exactly where they are, never tidied
+        up. The only thing that removes a note is the user.</p>
+      <p><strong>No sign-in is structural, not a promise.</strong> The package imports no networking
+        library at all — no <code>socket</code>, <code>ssl</code>, <code>http</code>,
+        <code>urllib</code> or <code>requests</code>, and of Qt only <code>QtCore</code>,
+        <code>QtGui</code> and <code>QtWidgets</code>. One test walks the AST of every module and
+        fails on any such import; another runs a full session with <code>socket.socket</code>
+        patched to raise. There is nothing to authenticate to, so there is no credential to phish,
+        leak or store.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">10</span>
+      <h2>This page, audited against its own checklist</h2>
+      <span class="sec-tag t-medium">Meta</span>
+    </div>
+
+    <p class="prose">The application is Qt, not web — it contains no HTML, CSS or JavaScript at
+      all. This report does, so the front-end checklist was applied here instead. Two findings came
+      out of it that were not merely box-ticking.</p>
+
+    <div class="finding high">
+      <h3><span class="fid">10.1</span> Two palette tokens failed WCAG AA</h3>
+      <p>Converting the palette to <code>oklch()</code> meant computing every value properly, and
+        the contrast audit that came with it caught two failures in text I had already shipped:
+        <code>--ink-faint</code> at <strong>3.39:1</strong> and the light <code>--accent</code> at
+        <strong>4.24:1</strong>, both used for small uppercase labels that need 4.5:1.</p>
+      <div class="fix"><b>Fixed</b>Because OKLCH lightness is perceptual, each was corrected by
+        moving <em>L</em> alone — hue and chroma untouched, so the palette still looks like itself.
+        Now 4.63:1, 4.61:1 and 4.62:1.</div>
+    </div>
+
+    <div class="finding high">
+      <h3><span class="fid">10.2</span> Cascade layers would have silently broken the page</h3>
+      <p>The host wraps this document and injects its own reset —
+        <code>body{font:14px…;background:#faf9f5;color:#141413}</code> — as <em>unlayered</em> CSS.
+        Unlayered declarations beat every layer regardless of order, so moving everything into
+        <code>@layer</code> would have handed the host's light background and 14px type to a page
+        rendering its own dark theme.</p>
+      <div class="fix"><b>Fixed</b>Everything is layered except the <code>body</code> and
+        <code>color-scheme</code> rules, which stay unlayered deliberately so they outrank the
+        host. Verified in a browser against a replica of the real wrapper, in both themes.</div>
+    </div>
+
+    <div class="finding">
+      <h3><span class="fid">10.3</span> What the rest of it bought</h3>
+      <ul>
+        <li><strong>Subgrid</strong> earns its place in the scoreboard: each tile spans three
+          parent rows, so the label, the old value and the new value align across every tile even
+          when one label wraps. Measured — all four "after" values land on the same pixel row.</li>
+        <li><strong><code>:has()</code></strong> marks a finding that carries its own fix as
+          resolved, with no extra class in the markup. It asserts only the positive: several
+          findings share one fix block with their siblings, so a missing badge means nothing, and
+          styling those as "open" would have been false. An earlier version did exactly that and
+          was caught on screen.</li>
+        <li><strong><code>@property</code></strong> types the colour tokens — and, more usefully,
+          makes them animatable, which is what lets the theme swap cross-fade in pure CSS.</li>
+        <li><strong>Container queries</strong> reflow a finding when its own column narrows rather
+          than when the window does, so the component stays correct wherever it is placed.</li>
+        <li><strong>View Transitions</strong> is declared for the standalone page, but honestly:
+          inside the artifact frame there is no navigation to animate. The user-visible outcome the
+          rule is after — a smooth transition between page states — is delivered by the animated
+          tokens above, and it respects <code>prefers-reduced-motion</code>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>NotSucky Notes v1.3.0</span>
+    <span>443 tests · 92% coverage · ruff, mypy, pip-audit clean</span>
+    <span>Full report: AUDIT.md · CHANGELOG.md · SECURITY.md</span>
+  </footer>
+
+</main>
+</body>
+</html>

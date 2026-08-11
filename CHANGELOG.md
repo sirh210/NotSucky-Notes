@@ -51,6 +51,20 @@ rather than by discarding text after it has already been read.
   stray non-note file. Nothing was deleted, nothing was shortened, and the
   old trashed note was still restorable.
 
+### Documentation
+
+- Added `docs/audit-report.html`, a self-contained web version of the audit.
+  It is the only HTML in the repository, so it carries its own doctype,
+  `lang`, UTF-8 charset, and viewport rather than relying on a host page.
+  Modern CSS throughout: cascade layers, OKLCH colour, registered custom
+  properties, subgrid, `:has()`, container queries, a print stylesheet, and
+  no JavaScript at all. `tests/test_docs.py` asserts each of those, so the
+  page cannot quietly regress.
+- Two of those checks earned their keep immediately: converting the palette
+  to OKLCH exposed two tokens failing WCAG AA (3.39:1 and 4.24:1 on small
+  labels, now 4.6:1), and cascade layers would have silently lost to the
+  host page's unlayered reset had the `body` rule not been kept unlayered.
+
 ## [1.2.0] — 2026-08-10
 
 Follow-up review pass: security, performance, observability, and docs.

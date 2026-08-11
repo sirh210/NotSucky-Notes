@@ -229,6 +229,7 @@ notes, restoring backups, and reading the logs.
 | Document | What it covers |
 | --- | --- |
 | [AUDIT.md](AUDIT.md) | The production-readiness audit and every finding |
+| [docs/audit-report.html](docs/audit-report.html) | The same audit as a self-contained web page |
 | [OPERATIONS.md](OPERATIONS.md) | Support, recovery, logs, diagnostics |
 | [SECURITY.md](SECURITY.md) | Threat model, controls, accepted risks |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, layering rules, test conventions |
