@@ -16,6 +16,11 @@ DEBOUNCE_SAVE_DELAY_MS: Final[int] = 600
 SEARCH_DEBOUNCE_MS: Final[int] = 150
 
 # ─── Limits ───────────────────────────────────────────────────────
+# These bound how far *new* input may grow a note. They are never applied
+# retroactively: content that is already longer — written by an older build,
+# by hand, or by another tool — is loaded, displayed, and saved back in full.
+# Truncating on load looks harmless and then destroys the note on the next
+# save, so a note may only ever lose text because the user deleted it.
 MAX_TITLE_LENGTH: Final[int] = 200
 MAX_CONTENT_LENGTH: Final[int] = 1_000_000
 CARD_PREVIEW_LENGTH: Final[int] = 80

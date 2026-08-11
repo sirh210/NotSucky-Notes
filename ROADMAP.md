@@ -58,9 +58,11 @@ The build is straightforward; the real cost is code-signing certificates,
 without which both operating systems show scary warnings.
 
 ### 8. Configurable retention and backup policy
-Trash retention (30 days), backup count (10), and backup interval (daily) are
-constants. They should be a small settings file once anyone disagrees with a
-default.
+Backup count (10) and backup interval (daily) are constants. They should be a
+small settings file once anyone disagrees with a default. Note that trash
+retention is deliberately *not* on this list: the application does not expire
+trashed notes at all, and adding a timer that deletes user data would undo a
+guarantee the project makes on purpose.
 
 ## Long term — only with a clear reason
 

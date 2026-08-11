@@ -151,10 +151,15 @@ class TestClaimsMatchCode:
         assert f'version = "{__version__}"' in read("pyproject.toml")
         assert f"[{__version__}]" in read("CHANGELOG.md")
 
-    def test_the_documented_retention_matches_the_code(self) -> None:
+    def test_the_docs_do_not_promise_a_retention_window(self) -> None:
+        """Trash is kept indefinitely; the docs must not imply a deadline."""
         from notsucky.services.file_manager import TRASH_RETENTION_DAYS
 
-        assert f"{TRASH_RETENTION_DAYS} days" in read("README.md")
+        assert TRASH_RETENTION_DAYS is None
+        for name in ("README.md", "OPERATIONS.md"):
+            text = read(name)
+            assert "purged after 30 days" not in text
+            assert "for 30 days" not in text
 
     def test_the_documented_backup_count_matches_the_code(self) -> None:
         from notsucky.services import backup

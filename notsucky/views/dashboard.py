@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
 
 from notsucky.models.note import Note
 from notsucky.services.file_manager import (
-    TRASH_RETENTION_DAYS,
     FileManager,
     StorageError,
     filter_notes,
@@ -576,9 +575,9 @@ class DashboardWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Delete Note",
-            f"Delete “{note.title or 'Untitled'}”?\n\n"
-            f"It moves to the trash and can be restored with Ctrl+Z, "
-            f"or recovered from disk for {TRASH_RETENTION_DAYS} days.",
+            f"Move “{note.title or 'Untitled'}” to the trash?\n\n"
+            "Nothing is erased: the note file moves to the trash folder and "
+            "stays there until you remove it yourself. Ctrl+Z brings it back.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

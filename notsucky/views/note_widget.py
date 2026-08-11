@@ -28,6 +28,7 @@ from notsucky.utils.constants import (
     COLORS,
     DEBOUNCE_SAVE_DELAY_MS,
     MAX_CONTENT_LENGTH,
+    MAX_TITLE_LENGTH,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
     color_scheme,
@@ -99,6 +100,12 @@ class NoteWidget(QWidget):
         self._drag_offset: QPoint | None = None
         self._closing = False
 
+        # Growth ceilings, never shrink ceilings. A note that already holds
+        # more than the limit keeps its current length as its ceiling, so
+        # nothing the user wrote is ever discarded by opening the window.
+        self._content_ceiling = max(MAX_CONTENT_LENGTH, len(note.content))
+        self._title_ceiling = max(MAX_TITLE_LENGTH, len(note.title))
+
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle(note.title or "Untitled note")
         self.setMinimumSize(MIN_NOTE_WIDTH, MIN_NOTE_HEIGHT)
@@ -163,7 +170,9 @@ class NoteWidget(QWidget):
         self.title_input = QLineEdit(self.note.title)
         self.title_input.setPlaceholderText("Untitled")
         self.title_input.setAccessibleName("Note title")
-        self.title_input.setMaxLength(200)
+        # setMaxLength truncates text already in the field, so the ceiling has
+        # to allow for a title that is longer than the limit to begin with.
+        self.title_input.setMaxLength(self._title_ceiling)
         self.title_input.textChanged.connect(self._on_title_changed)
         layout.addWidget(self.title_input, stretch=1)
 
@@ -315,16 +324,22 @@ class NoteWidget(QWidget):
 
     def _on_text_changed(self) -> None:
         text = self.text_edit.toPlainText()
-        if len(text) > MAX_CONTENT_LENGTH:
-            # Guard against a paste that would blow past the storage limit.
+        if len(text) > self._content_ceiling:
+            # Refuse the *growth* past the ceiling; never shorten what was
+            # already there. The ceiling starts at whatever the note already
+            # contained, so opening a very long note cannot shrink it — that
+            # would be written back by the next save as a silent deletion.
             cursor = self.text_edit.textCursor()
             position = cursor.position()
             self.text_edit.blockSignals(True)
-            self.text_edit.setPlainText(text[:MAX_CONTENT_LENGTH])
-            cursor.setPosition(min(position, MAX_CONTENT_LENGTH))
+            self.text_edit.setPlainText(text[: self._content_ceiling])
+            cursor.setPosition(min(position, self._content_ceiling))
             self.text_edit.setTextCursor(cursor)
             self.text_edit.blockSignals(False)
             text = self.text_edit.toPlainText()
+            self.status_label.setText(f"⚠ limit reached ({self._content_ceiling:,} chars)")
+            self._save_timer.start()
+            return
         self.status_label.setText(f"{len(text):,} char{'s' if len(text) != 1 else ''}")
         self._save_timer.start()
 

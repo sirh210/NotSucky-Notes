@@ -189,13 +189,18 @@ class TestDelete:
 
 
 class TestLimits:
-    def test_title_is_capped(self) -> None:
+    """The service persists what it is given. Growth is bounded in the
+    editor, because a limit enforced down here silently deletes text that
+    already existed."""
+
+    def test_a_long_title_is_persisted_in_full(self) -> None:
         note = NoteService.create()
         NoteService.update_title(note, "x" * 10_000)
-        assert len(FileManager.load_by_id(note.id).title) == 200
+        assert len(FileManager.load_by_id(note.id).title) == 10_000
 
-    def test_content_is_capped(self) -> None:
+    def test_long_content_is_persisted_in_full(self) -> None:
         note = Note()
         FileManager.save_note(note)
         NoteService.update_content(note, "y" * 2_000_000)
-        assert len(note.content) == 1_000_000
+        assert len(note.content) == 2_000_000
+        assert len(FileManager.load_by_id(note.id).content) == 2_000_000

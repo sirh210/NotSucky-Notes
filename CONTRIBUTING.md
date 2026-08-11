@@ -61,16 +61,29 @@ Each of these exists because breaking it caused a real bug. The
    truncates first, so an interrupted write destroys the note.
 3. **Never swallow a `StorageError`.** It must reach the UI. A save that
    silently fails is a user typing into a void.
-4. **Deletion goes through the trash.** `purge_note` is the permanent one and
-   should be rare.
-5. **Never log note titles or content.** Ids and counts only. Two tests
+4. **Nothing may delete a note the user did not delete.** Deletion moves the
+   file into the trash, which has no expiry. Do not add a sweep, a retention
+   timer, a "tidy up" task, or a cleanup of files the loader could not parse.
+   `purge_note`, `purge_trash`, and `empty_trash` exist for an explicit user
+   request only, and nothing may call them automatically.
+5. **No limit may shorten text that already exists.** `MAX_CONTENT_LENGTH` and
+   `MAX_TITLE_LENGTH` bound how far *new* input can grow a note. Truncating on
+   load looks harmless and is written back by the next save as a real
+   deletion. Enforce ceilings in the editor, never in the model or service.
+6. **No networking, ever.** The package imports no network library and there
+   is no sign-in. A test walks the AST of every module and fails on `socket`,
+   `urllib`, `requests`, `QtNetwork`, and friends. Keep it that way.
+7. **Never log note titles or content.** Ids and counts only. Two tests
    enforce this by writing a secret into a note and searching the log.
-6. **A `QWidget` subclass needs `WA_StyledBackground`** to paint its own
+8. **A `QWidget` subclass needs `WA_StyledBackground`** to paint its own
    background colour. Without it the widget renders transparent, which is not
    visible to any logic test.
-7. **Do not give a widget its own stylesheet inside a loop.** Qt re-parses CSS
+9. **Do not give a widget its own stylesheet inside a loop.** Qt re-parses CSS
    per widget; that was 80% of the cost of building the grid. Add rules to
    `CARD_STYLESHEET` and select on a property instead.
+10. **Scope every Qt stylesheet with a selector.** A selector-less sheet such
+    as `setStyleSheet("background: transparent")` applies to the widget *and
+    every descendant*, which once blanked every card in the grid.
 
 ## Tests
 

@@ -17,10 +17,12 @@ plain JSON files on disk and no database.
   keystroke; edits are also flushed on close, minimize, and quit.
 - **Crash-safe writes** — notes are written atomically, so an interrupted save
   leaves the previous version intact rather than a truncated file.
-- **Undoable delete** — deleted notes go to a trash directory. `Ctrl+Z` puts
-  the last one back, and anything deleted in the past 30 days is still on disk.
+- **Nothing is ever deleted behind your back** — see the guarantee below.
+- **Undoable delete** — deleting moves the note's file into a trash folder,
+  where it stays until *you* remove it. `Ctrl+Z` puts the last one back.
 - **Automatic backups** — a dated zip snapshot of every note, taken at most
   once a day, with the ten most recent kept.
+- **Works entirely offline** — no account, no sign-in, no network code.
 - **Minimize to dock** — park notes in the strip at the bottom; the dock is
   restored when you reopen the app.
 - **Local file storage** — one human-readable JSON file per note.
@@ -38,6 +40,26 @@ pip install -e .                # or: pip install -r requirements.txt
 ```
 
 Requires Python 3.10+.
+
+## Two guarantees
+
+**Your notes are never deleted except by you.** Nothing runs on a timer to
+tidy them up. Deleting moves the note's file into `notes/.trash/`, where it
+stays indefinitely — there is no expiry sweep. Files the app cannot read
+(corrupt, oversized, written by something else) are skipped and left exactly
+where they are, never cleaned up. No length limit ever shortens a note that
+already exists: limits bound how far new typing can grow a note, and a note
+that is already longer keeps its current length as its ceiling. Every write is
+atomic, so an interrupted save leaves the previous version intact.
+
+The one way to permanently remove a note is to delete the file yourself, from
+`notes/.trash/`, in your file manager.
+
+**There is no sign-in, and there cannot be.** The package imports no
+networking library of any kind — no `socket`, no `urllib`, no `requests`, and
+only Qt's `QtCore`, `QtGui`, and `QtWidgets`. There is no account, no
+telemetry, and nothing to log in to. Both guarantees are enforced by tests in
+`tests/test_no_data_loss.py`, including one that makes opening a socket raise.
 
 ## Usage
 
@@ -96,7 +118,7 @@ Alongside the notes you will find:
 | Path | Contents |
 | --- | --- |
 | `notes/` | One JSON file per note |
-| `notes/.trash/` | Deleted notes, purged after 30 days |
+| `notes/.trash/` | Deleted notes, kept indefinitely |
 | `backups/` | Dated zip snapshots, ten kept |
 | `logs/notsucky.log` | Rotating log, 3 × 1 MB (`--no-log-file` to disable) |
 
@@ -104,6 +126,10 @@ Alongside the notes you will find:
 copy the file out of `notes/.trash/` — the name is `<id>.<unix-time>.json` —
 and drop it into `notes/` with the timestamp removed. To roll back further,
 unzip a snapshot from `backups/` over `notes/`.
+
+**Reclaiming space.** The trash grows forever by design. Delete files from
+`notes/.trash/` yourself whenever you want the space back; the application
+will never do it for you.
 
 > **Upgrading from 1.0?** Versions before 1.1 stored notes inside the project
 > directory. On first launch your existing notes are **copied** into the new

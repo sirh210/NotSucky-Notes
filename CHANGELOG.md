@@ -4,6 +4,53 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-08-10
+
+Makes two guarantees explicit and enforces them with tests: **the application
+never deletes a note you did not delete**, and **there is no sign-in**.
+
+### Fixed — the app could delete your notes on its own
+
+- **Removed the automatic trash sweep.** Every launch used to permanently
+  delete trashed notes older than 30 days — unattended data loss, with no
+  prompt and no way to intervene. Trashed notes are now kept indefinitely.
+  `TRASH_RETENTION_DAYS` is `None`, `purge_trash()` with no argument removes
+  nothing, and `run_maintenance` no longer calls it at all.
+- **Removed content truncation on load.** `Note.__post_init__` capped content
+  at 1,000,000 characters and titles at 200 *when reading a file*. The
+  shortened value was then written back by the next save — including a save
+  triggered by nothing more than moving the window — so a long note was
+  silently and permanently cut down. Notes are now loaded and saved exactly as
+  found, however long.
+- **Removed truncation from the service layer.** `update_title` and
+  `update_content` persist what they are given; only trailing blank lines that
+  the editor itself adds are dropped.
+- **Fixed the editor shrinking long notes on open.** `setPlainText` and
+  `QLineEdit.setMaxLength` truncated an over-limit note the moment its window
+  appeared. Each note now carries a growth ceiling of
+  `max(limit, current length)`, so new typing is still bounded but nothing
+  existing is ever cut.
+
+Length limits still exist; they now bound how far *new* input can grow a note
+rather than trimming what is already there. Memory is protected by refusing to
+read an oversized *file* (8 MB) — which leaves the file untouched on disk —
+rather than by discarding text after it has already been read.
+
+### Changed
+
+- The delete confirmation now says what actually happens: the file moves to
+  the trash folder and stays there until you remove it.
+
+### Added
+
+- `tests/test_no_data_loss.py` — 31 tests covering both guarantees, including
+  a walk of every module's AST that fails on any networking import, and one
+  that makes `socket.socket` raise while exercising a full session.
+- Verified end to end: 365 simulated launches over a store containing a
+  1.5 M-character note, a decade-old trashed note, a corrupt file, and a
+  stray non-note file. Nothing was deleted, nothing was shortened, and the
+  old trashed note was still restorable.
+
 ## [1.2.0] — 2026-08-10
 
 Follow-up review pass: security, performance, observability, and docs.

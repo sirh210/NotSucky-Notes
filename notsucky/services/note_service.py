@@ -17,8 +17,6 @@ from notsucky.services.file_manager import FileManager
 from notsucky.utils.constants import (
     COLORS,
     DEFAULT_COLOR_NAME,
-    MAX_CONTENT_LENGTH,
-    MAX_TITLE_LENGTH,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
 )
@@ -37,8 +35,8 @@ class NoteService:
         now = utc_now()
         note = Note(
             id=new_id(),
-            title=(title or f"Note {new_id()[:6]}")[:MAX_TITLE_LENGTH],
-            content=content[:MAX_CONTENT_LENGTH],
+            title=title or f"Note {new_id()[:6]}",
+            content=content,
             color=color if color in COLORS else DEFAULT_COLOR_NAME,
             created_at=now,
             updated_at=now,
@@ -51,19 +49,27 @@ class NoteService:
 
     @staticmethod
     def update_title(note: Note, new_title: str) -> bool:
-        """Persist a new title. Returns False if nothing changed."""
-        trimmed = new_title[:MAX_TITLE_LENGTH]
-        if trimmed == note.title:
+        """Persist a new title verbatim. Returns False if nothing changed.
+
+        Nothing is truncated here: the caller decides what the title is, and
+        silently shortening it on the way to disk is a deletion the user did
+        not ask for. Growth is bounded in the editor instead.
+        """
+        if new_title == note.title:
             return False
-        note.title = trimmed
+        note.title = new_title
         note.touch()
         FileManager.save_note(note)
         return True
 
     @staticmethod
     def update_content(note: Note, new_content: str) -> bool:
-        """Persist new content. Returns False if nothing changed."""
-        trimmed = new_content[:MAX_CONTENT_LENGTH].rstrip("\n")
+        """Persist new content. Returns False if nothing changed.
+
+        Only trailing blank lines are dropped — the editor adds them and the
+        user did not type them. Everything else is written exactly as given.
+        """
+        trimmed = new_content.rstrip("\n")
         if trimmed == note.content:
             return False
         note.content = trimmed
@@ -167,17 +173,15 @@ class NoteService:
 
     @staticmethod
     def run_maintenance(*, backup: bool = True) -> None:
-        """Startup housekeeping: sweep the trash, snapshot if one is due.
+        """Startup housekeeping. Deliberately additive only.
 
-        Both steps are best-effort. Neither is allowed to stop the
-        application from opening — a user who cannot launch their notes
-        because a backup failed is worse off than one without a backup.
+        This used to sweep the trash of anything older than 30 days, which
+        made the application delete a user's notes on its own, unattended,
+        with no way to intervene. Nothing here removes note data any more:
+        trashed notes stay until the user removes them. The only step left
+        is taking a backup, and it is best-effort — nobody should be unable
+        to open their notes because a snapshot failed.
         """
-        try:
-            FileManager.purge_trash()
-        except Exception:
-            logger.exception("Trash purge failed")
-
         if backup:
             try:
                 backup_service.backup_if_due()

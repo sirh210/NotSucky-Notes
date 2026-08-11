@@ -160,23 +160,55 @@ class TestListTrash:
         assert FileManager.list_trash() == []
 
 
-class TestRetentionSweep:
+class TestNothingIsPurgedOnATimer:
+    """The application must never remove a note the user did not remove.
+
+    An automatic sweep used to delete trashed notes older than 30 days at
+    startup — unattended data loss with no way to intervene.
+    """
+
     def _seed(self, ages_in_days: dict[str, float]) -> None:
         trash = FileManager.trash_directory()
         for note_id, age in ages_in_days.items():
             (trash / trash_name(note_id, when=days_ago(age))).write_text("{}", encoding="utf-8")
 
-    def test_expired_entries_are_purged(self, notes_dir) -> None:
-        self._seed({"old00001": TRASH_RETENTION_DAYS + 1, "new00001": 1})
+    def test_the_default_purge_removes_nothing(self, notes_dir) -> None:
+        self._seed({"ancient1": 10_000, "old00001": 400, "new00001": 1})
 
-        assert FileManager.purge_trash() == 1
-        assert [trash_note_id(p) for p in FileManager.list_trash()] == ["new00001"]
-
-    def test_entries_exactly_at_the_boundary_are_kept(self, notes_dir) -> None:
-        self._seed({"edge0001": TRASH_RETENTION_DAYS - 0.01})
         assert FileManager.purge_trash() == 0
+        assert len(FileManager.list_trash()) == 3
 
-    def test_a_custom_age_is_honoured(self, notes_dir) -> None:
+    def test_retention_is_unlimited(self) -> None:
+        assert TRASH_RETENTION_DAYS is None
+
+    def test_a_decade_old_trashed_note_survives_startup(self, notes_dir) -> None:
+        self._seed({"ancient1": 3650})
+
+        for _ in range(20):  # twenty launches
+            NoteService.run_maintenance(backup=False)
+
+        assert [trash_note_id(p) for p in FileManager.list_trash()] == ["ancient1"]
+
+    def test_a_trashed_note_is_still_restorable_years_later(self, notes_dir) -> None:
+        note = NoteService.create(title="Long forgotten", content="still here")
+        trashed = NoteService.delete(note)
+        # Backdate the entry to a decade ago.
+        aged = trashed.parent / trash_name(note.id, when=days_ago(3650))
+        trashed.rename(aged)
+
+        NoteService.run_maintenance(backup=False)
+
+        restored = NoteService.undo_delete(aged)
+        assert restored is not None
+        assert restored.content == "still here"
+
+    def test_maintenance_never_calls_purge_at_all(self) -> None:
+        with mock.patch.object(FileManager, "purge_trash") as spy:
+            NoteService.run_maintenance(backup=False)
+            spy.assert_not_called()
+
+    def test_purging_still_works_when_asked_explicitly(self, notes_dir) -> None:
+        """Reclaiming space stays possible — it just never happens by itself."""
         self._seed({"a0000001": 8, "b0000001": 2})
         assert FileManager.purge_trash(max_age_days=7) == 1
 
@@ -185,27 +217,13 @@ class TestRetentionSweep:
         (FileManager.trash_directory() / "mystery.json").write_text("{}", encoding="utf-8")
         assert FileManager.purge_trash(max_age_days=0) == 0
 
-    def test_empty_trash_removes_everything(self, notes_dir) -> None:
+    def test_empty_trash_removes_everything_when_asked(self, notes_dir) -> None:
         self._seed({"a0000001": 0, "b0000001": 1})
         assert FileManager.empty_trash() == 2
         assert FileManager.list_trash() == []
 
-    def test_purging_an_empty_trash_is_a_no_op(self) -> None:
-        assert FileManager.purge_trash() == 0
-
 
 class TestMaintenance:
-    def test_maintenance_sweeps_the_trash(self, notes_dir) -> None:
-        trash = FileManager.trash_directory()
-        (trash / trash_name("old00001", when=days_ago(90))).write_text("{}", encoding="utf-8")
-
-        NoteService.run_maintenance(backup=False)
-        assert FileManager.list_trash() == []
-
-    def test_maintenance_survives_a_failing_sweep(self) -> None:
-        with mock.patch.object(FileManager, "purge_trash", side_effect=OSError("nope")):
-            NoteService.run_maintenance(backup=False)  # must not raise
-
     def test_maintenance_survives_a_failing_backup(self) -> None:
         from notsucky.services import backup as backup_service
 
@@ -220,3 +238,9 @@ class TestMaintenance:
         with mock.patch.object(backup_service, "backup_if_due") as spy:
             NoteService.run_maintenance(backup=False)
             spy.assert_not_called()
+
+    def test_maintenance_never_touches_live_notes(self, notes_dir) -> None:
+        kept = [NoteService.create(title=f"n{i}") for i in range(5)]
+        NoteService.run_maintenance(backup=False)
+
+        assert sorted(n.id for n in FileManager.load_all()) == sorted(n.id for n in kept)

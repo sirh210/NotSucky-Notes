@@ -15,8 +15,6 @@ from notsucky.utils.constants import (
     DEFAULT_COLOR_NAME,
     DEFAULT_NOTE_HEIGHT,
     DEFAULT_NOTE_WIDTH,
-    MAX_CONTENT_LENGTH,
-    MAX_TITLE_LENGTH,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
 )
@@ -84,12 +82,15 @@ class Note:
     updated_at: str = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
+        # Repairs here must never discard text. An id, a colour, or a window
+        # size can be replaced with a sane default because none of them is
+        # something the user wrote. Title and content are, so they are taken
+        # exactly as found however long they are — truncating on load would
+        # be written back as a real deletion by the next save.
         if not is_valid_id(self.id):
             self.id = new_id()
         if self.color not in COLORS:
             self.color = DEFAULT_COLOR_NAME
-        self.title = self.title[:MAX_TITLE_LENGTH]
-        self.content = self.content[:MAX_CONTENT_LENGTH]
         self.width = max(MIN_NOTE_WIDTH, self.width)
         self.height = max(MIN_NOTE_HEIGHT, self.height)
 

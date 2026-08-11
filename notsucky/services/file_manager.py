@@ -29,8 +29,10 @@ logger = logging.getLogger(__name__)
 #: keeps it out of ``*.json`` globs and out of the user's way.
 TRASH_DIR_NAME = ".trash"
 
-#: How long a deleted note is recoverable before it is purged.
-TRASH_RETENTION_DAYS = 30
+#: Trashed notes are kept indefinitely. Nothing in the application removes
+#: them on a timer: :meth:`FileManager.purge_trash` exists for a user who
+#: explicitly asks to reclaim the space, and is never called automatically.
+TRASH_RETENTION_DAYS: int | None = None
 
 #: Largest note file that will be read into memory. A note is capped at
 #: 1,000,000 characters, which is at most ~4 MB of UTF-8 plus JSON overhead,
@@ -227,12 +229,19 @@ class FileManager:
         return note
 
     @classmethod
-    def purge_trash(cls, max_age_days: int = TRASH_RETENTION_DAYS) -> int:
+    def purge_trash(cls, max_age_days: int | None = TRASH_RETENTION_DAYS) -> int:
         """Permanently remove trash entries older than ``max_age_days``.
+
+        **Only ever called when a user explicitly asks to reclaim space.**
+        Nothing in the application calls it on a timer or at startup, and
+        ``max_age_days=None`` — the default — removes nothing at all, so an
+        accidental call cannot destroy anything.
 
         Returns the number of entries removed. Entries with an unparseable
         name are kept rather than guessed at.
         """
+        if max_age_days is None:
+            return 0
         cutoff = datetime.now(timezone.utc).timestamp() - max_age_days * 86_400
         removed = 0
         for entry in cls.list_trash():

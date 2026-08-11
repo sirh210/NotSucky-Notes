@@ -12,7 +12,6 @@ from notsucky.utils.constants import (
     DEFAULT_NOTE_HEIGHT,
     DEFAULT_NOTE_WIDTH,
     MAX_CONTENT_LENGTH,
-    MAX_TITLE_LENGTH,
     MIN_NOTE_HEIGHT,
     MIN_NOTE_WIDTH,
 )
@@ -75,11 +74,13 @@ class TestNoteValidation:
     def test_unknown_color_falls_back_to_default(self) -> None:
         assert Note(color="Chartreuse").color == "Yellow"
 
-    def test_oversized_title_is_truncated(self) -> None:
-        assert len(Note(title="x" * 5000).title) == MAX_TITLE_LENGTH
+    def test_an_oversized_title_is_preserved(self) -> None:
+        """Truncating on load is written back by the next save as a deletion."""
+        assert len(Note(title="x" * 5000).title) == 5000
 
-    def test_oversized_content_is_truncated(self) -> None:
-        assert len(Note(content="x" * (MAX_CONTENT_LENGTH + 10)).content) == MAX_CONTENT_LENGTH
+    def test_oversized_content_is_preserved(self) -> None:
+        oversized = MAX_CONTENT_LENGTH + 10
+        assert len(Note(content="x" * oversized).content) == oversized
 
     def test_undersized_geometry_is_raised_to_minimum(self) -> None:
         note = Note(width=10, height=10)

@@ -8,9 +8,16 @@ rather than a public issue. Expect an acknowledgement within a week.
 ## Threat model
 
 NotSucky Notes is a local desktop application. It **opens no sockets, makes no
-network requests, runs no server, has no authentication, and has no users
+network requests, runs no server, has no accounts or sign-in, and has no users
 other than the person at the keyboard.** Most of the OWASP Top 10 describes
 attacks on a web application and simply has no surface here.
+
+This is structural, not a promise: the package imports no networking library
+at all — no `socket`, `ssl`, `http`, `urllib`, or `requests`, and of Qt only
+`QtCore`, `QtGui`, and `QtWidgets`. A test walks the AST of every module and
+fails if one appears; another runs a full session with `socket.socket` patched
+to raise. There is nothing to authenticate to, so there is no credential to
+phish, leak, or store.
 
 What is left is worth taking seriously:
 
@@ -56,6 +63,17 @@ Every save goes to a temporary file in the same directory, is `fsync`ed, and
 is moved into place with `os.replace`. An interrupted write leaves the
 previous version intact rather than a truncated file. Deletion moves notes to
 `.trash` rather than unlinking them.
+
+### Nothing deletes a note but the user
+Availability is part of security, and the most likely way to lose a note is
+not an attacker — it is the application tidying up. So it does not tidy up.
+There is no retention sweep, no expiry, and no cleanup of files the loader
+could not parse; an unreadable or oversized file is skipped and left exactly
+where it is. `purge_trash`, `empty_trash`, and `purge_note` exist for an
+explicit user request and are never called on a timer. Length limits bound
+how far new input can grow a note and are never applied to text that already
+exists, because truncating on load is written back as a real deletion by the
+next save.
 
 ### The data directory is owner-only
 On Linux and macOS the notes and backup directories are `chmod 0700`, because

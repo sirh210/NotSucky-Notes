@@ -95,12 +95,22 @@ class TestResourceExhaustion:
         assert (notes_dir / f"{note.id}.json").stat().st_size < MAX_NOTE_FILE_BYTES
         assert FileManager.load_by_id(note.id) is not None
 
-    def test_note_content_is_capped_regardless_of_file_content(self, notes_dir) -> None:
+    def test_memory_is_bounded_by_the_file_guard_not_by_truncation(
+        self, notes_dir
+    ) -> None:
+        """Memory is protected by refusing to read an oversized *file*.
+
+        Truncating the content after reading protects nothing — the whole
+        file is already in memory by then — and destroys the note on the
+        next save. So a large-but-permitted note loads in full.
+        """
         payload = json.dumps({"id": "big00001", "content": "A" * 2_000_000})
         (notes_dir / "big00001.json").write_text(payload, encoding="utf-8")
+        assert (notes_dir / "big00001.json").stat().st_size < MAX_NOTE_FILE_BYTES
+
         loaded = FileManager.load_by_id("big00001")
         assert loaded is not None
-        assert len(loaded.content) == 1_000_000
+        assert len(loaded.content) == 2_000_000
 
 
 class TestArchiveHandling:

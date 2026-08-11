@@ -35,7 +35,9 @@ them — any text editor will do, and that is deliberate.
 2. Older ones: look in `notes/.trash/`. Files are named
    `<id>.<unix-time>.json`. Copy one back into `notes/` and rename it to
    `<id>.json`. Restart or press `F5`.
-3. Deleted more than 30 days ago: it has been swept. Go to backups.
+3. There is no step 3 for age — the trash has no expiry, so a note deleted
+   years ago is still there. If the file is genuinely gone, someone removed it
+   by hand; go to backups.
 
 ### Restore from a backup
 ```bash
@@ -98,8 +100,14 @@ the previous version on disk is intact.
 
 ## Routine maintenance
 
-Nothing is required. For reference, on each launch the app purges trash older
-than 30 days and takes a backup if the newest is over a day old.
+Nothing is required, and nothing is cleaned up for you. On each launch the app
+takes a backup if the newest is over a day old — that is the only automatic
+task, and it only ever *adds* data.
+
+The trash grows indefinitely on purpose: the application will not delete a
+note the user did not delete. To reclaim space, remove files from
+`notes/.trash/` in your file manager. Check what you are deleting first — each
+file is a complete note.
 
 To back up on a schedule instead, the CLI needs no display:
 ```bash
